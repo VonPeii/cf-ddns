@@ -1,0 +1,38 @@
+services:
+  cf-autoupdate:
+    build: .
+    image: cf-ddns-arm64:v6
+    container_name: cf-ddns-updater
+    restart: always
+    network_mode: "host"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/web/data
+    environment:
+      # --- 基础测速 ---
+      - INTERVAL=86400
+      - CFST_TL=250
+      - CFST_SL=5
+      - IP_COUNT=5
+      - CFST_URL=https://speed.cloudflare.com/__down?bytes=50000000
+      - ENABLE_IPV4=true
+      - ENABLE_IPV6=true
+      - ABORT_LATENCY=300
+
+      # --- 渐进式更新（金丝雀） ---
+      - CANARY_MODE=false
+      - CANARY_MAX_CHANGES=1
+
+      # --- 失败重试 ---
+      - API_MAX_RETRIES=3
+      - API_BASE_DELAY=5
+
+      # --- 智能调度 ---
+      - SMART_INTERVAL=true
+      - SMART_STABLE_THRESHOLD=3
+      - MAX_INTERVAL=172800
+
+      # --- Web 面板 ---
+      - WEB_PORT=8088
+      - HISTORY_MAX=200

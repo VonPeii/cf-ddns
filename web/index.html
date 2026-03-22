@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CF-DDNS 状态面板</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e0e0e0;
+    --text2: #888;
+    --accent: #4f8cff;
+    --green: #34d399;
+    --red: #f87171;
+    --orange: #fbbf24;
+    --purple: #a78bfa;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 20px; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  .meta { font-size: 13px; color: var(--text2); text-align: right; }
+  .meta .live { color: var(--green); }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .card .label { font-size: 12px; color: var(--text2); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 24px; font-weight: 700; }
+  .card .value.good { color: var(--green); }
+  .card .value.warn { color: var(--orange); }
+  .card .value.bad { color: var(--red); }
+  .card .sub { font-size: 12px; color: var(--text2); margin-top: 4px; }
+
+  .section { margin-bottom: 24px; }
+  .section-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--text2); }
+  .domain-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 12px;
+  }
+  .domain-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .domain-card h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 8px;
+    word-break: break-all;
+  }
+  .domain-card .zone-hint {
+    font-size: 11px;
+    color: var(--text2);
+    margin-bottom: 8px;
+  }
+  .ip-tag {
+    display: inline-block;
+    background: #262a38;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    margin: 2px 4px 2px 0;
+    font-size: 12px;
+    font-family: "SF Mono", "Fira Code", monospace;
+  }
+
+  .table-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    background: #1e2130;
+    color: var(--text2);
+    font-weight: 500;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  td { padding: 9px 14px; border-top: 1px solid var(--border); font-family: "SF Mono", "Fira Code", monospace; font-size: 13px; }
+  tr:hover td { background: #1e2130; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-v4 { background: #1e3a5f; color: #60a5fa; }
+  .badge-v6 { background: #3b1f5e; color: #c084fc; }
+
+  .chart-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  canvas { width: 100%; height: 220px; }
+
+  .footer { text-align: center; padding: 20px 0 8px; font-size: 12px; color: #444; }
+
+  .loading { text-align: center; padding: 60px; color: var(--text2); }
+  .error-msg { text-align: center; padding: 40px; color: var(--red); }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tab {
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text2);
+    transition: all .15s;
+  }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  @media (max-width: 600px) {
+    body { padding: 12px; }
+    .cards { grid-template-columns: repeat(2, 1fr); }
+    .card .value { font-size: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ <span>CF-DDNS</span> 状态面板</h1>
+  <div class="meta">
+    <div>上次更新: <span id="lastUpdate">--</span></div>
+    <div>下次预估: <span id="nextUpdate">--</span></div>
+    <div class="live" id="autoRefresh">● 每 60 秒自动刷新</div>
+  </div>
+</header>
+
+<div id="content"><div class="loading">正在加载数据...</div></div>
+
+<div class="footer">CF-DDNS v6 · 数据保留最近 <span id="histMax">200</span> 条</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const DATA_BASE = '/data';
+let chartTab = 'latency';
+
+async function fetchJSON(path) {
+  const r = await fetch(DATA_BASE + path + '?t=' + Date.now());
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+function fmtCountdown(seconds) {
+  if (!seconds || seconds <= 0) return '计算中...';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return h + '小时' + m + '分钟';
+  return m + '分钟';
+}
+
+function latencyClass(val, abort) {
+  if (!val || val === null) return '';
+  if (val < abort * 0.5) return 'good';
+  if (val < abort * 0.8) return 'warn';
+  return 'bad';
+}
+
+function renderCards(st) {
+  const now = Math.floor(Date.now() / 1000);
+  const nextSec = (st.last_ts + st.sleep_seconds) - now;
+  const v4Lat = st.ipv4.enabled ? st.ipv4.top_latency : null;
+  const v6Lat = st.ipv6.enabled ? st.ipv6.top_latency : null;
+  const v4Cnt = st.ipv4.enabled ? st.ipv4.ips.length : 0;
+  const v6Cnt = st.ipv6.enabled ? st.ipv6.ips.length : 0;
+
+  let features = [];
+  if (st.smart_interval) features.push('智能调度');
+  if (st.canary_mode) features.push('金丝雀');
+  const featStr = features.length > 0 ? features.join(' + ') : '标准模式';
+
+  return `
+    <div class="card">
+      <div class="label">IPv4 延迟</div>
+      <div class="value ${st.ipv4.enabled ? latencyClass(v4Lat, st.abort_latency) : ''}">${st.ipv4.enabled ? (v4Lat !== null ? v4Lat + ' ms' : '无数据') : '未启用'}</div>
+      <div class="sub">${v4Cnt} 个活跃 IP</div>
+    </div>
+    <div class="card">
+      <div class="label">IPv6 延迟</div>
+      <div class="value ${st.ipv6.enabled ? latencyClass(v6Lat, st.abort_latency) : ''}">${st.ipv6.enabled ? (v6Lat !== null ? v6Lat + ' ms' : '无数据') : '未启用'}</div>
+      <div class="sub">${v6Cnt} 个活跃 IP</div>
+    </div>
+    <div class="card">
+      <div class="label">下次更新</div>
+      <div class="value" style="font-size:20px">${fmtCountdown(nextSec)}</div>
+      <div class="sub">休眠 ${st.sleep_seconds} 秒</div>
+    </div>
+    <div class="card">
+      <div class="label">运行模式</div>
+      <div class="value" style="font-size:16px;color:var(--purple)">${featStr}</div>
+      <div class="sub">熔断阈值 ${st.abort_latency} ms</div>
+    </div>
+  `;
+}
+
+function renderDomains(st) {
+  if (!st.domains || st.domains.length === 0) return '';
+  const allIps = [];
+  if (st.ipv4.enabled) st.ipv4.ips.forEach(i => allIps.push({...i, type: 'A'}));
+  if (st.ipv6.enabled) st.ipv6.ips.forEach(i => allIps.push({...i, type: 'AAAA'}));
+  const ipTags = allIps.map(i => `<span class="ip-tag">${i.ip}</span>`).join('');
+
+  return st.domains.map((d, idx) => `
+    <div class="domain-card">
+      <h3>${d}</h3>
+      <div class="zone-hint">独立 Zone #${idx + 1}</div>
+      ${ipTags || '<span style="color:var(--text2);font-size:12px">暂无解析记录</span>'}
+    </div>
+  `).join('');
+}
+
+function renderTable(st) {
+  let rows = '';
+  const addRows = (ips, type, badge) => {
+    ips.forEach((ip, i) => {
+      rows += `<tr>
+        <td><span class="badge ${badge}">${type}</span></td>
+        <td>${ip.ip}</td>
+        <td class="${latencyClass(ip.latency, st.abort_latency)}">${ip.latency} ms</td>
+        <td>${ip.speed} MB/s</td>
+        <td>${i === 0 ? '👑' : '#' + (i+1)}</td>
+      </tr>`;
+    });
+  };
+  if (st.ipv4.enabled && st.ipv4.ips.length) addRows(st.ipv4.ips, 'A', 'badge-v4');
+  if (st.ipv6.enabled && st.ipv6.ips.length) addRows(st.ipv6.ips, 'AAAA', 'badge-v6');
+
+  if (!rows) return '<div style="padding:20px;text-align:center;color:var(--text2)">暂无测速数据</div>';
+  return `<table>
+    <tr><th>类型</th><th>IP 地址</th><th>延迟</th><th>速度</th><th>排名</th></tr>
+    ${rows}
+  </table>`;
+}
+
+function drawChart(canvasId, history, mode) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !history.length) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = 220 * dpr;
+  canvas.style.width = rect.width + 'px';
+  canvas.style.height = '220px';
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = 220;
+  const PAD = { t: 20, r: 16, b: 36, l: 52 };
+  const cW = W - PAD.l - PAD.r, cH = H - PAD.t - PAD.b;
+
+  ctx.clearRect(0, 0, W, H);
+
+  const v4Key = mode === 'latency' ? 'v4_lat' : 'v4_spd';
+  const v6Key = mode === 'latency' ? 'v6_lat' : 'v6_spd';
+  const unit = mode === 'latency' ? 'ms' : 'MB/s';
+
+  const v4Data = history.map(h => h[v4Key]).filter(v => v !== null && v !== undefined);
+  const v6Data = history.map(h => h[v6Key]).filter(v => v !== null && v !== undefined);
+  const allVals = [...v4Data, ...v6Data];
+  if (!allVals.length) {
+    ctx.fillStyle = '#555';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('暂无历史数据', W/2, H/2);
+    return;
+  }
+
+  let minV = Math.min(...allVals) * 0.9;
+  let maxV = Math.max(...allVals) * 1.1;
+  if (maxV === minV) { maxV += 10; minV = Math.max(0, minV - 10); }
+  if (minV < 0) minV = 0;
+
+  const n = history.length;
+
+  ctx.strokeStyle = '#222633';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = PAD.t + (cH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W - PAD.r, y); ctx.stroke();
+    const val = maxV - (maxV - minV) * (i / 4);
+    ctx.fillStyle = '#555';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(val.toFixed(1), PAD.l - 6, y + 4);
+  }
+
+  ctx.fillStyle = '#555';
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'center';
+  const labelCount = Math.min(6, n);
+  for (let i = 0; i < labelCount; i++) {
+    const idx = Math.round(i * (n - 1) / Math.max(labelCount - 1, 1));
+    const x = PAD.l + (idx / Math.max(n - 1, 1)) * cW;
+    const label = history[idx].time.slice(5, 16);
+    ctx.fillText(label, x, H - PAD.b + 16);
+  }
+
+  function drawLine(keyName, color) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    let first = true;
+    history.forEach((h, i) => {
+      const val = h[keyName];
+      if (val === null || val === undefined) return;
+      const x = PAD.l + (i / Math.max(n - 1, 1)) * cW;
+      const y = PAD.t + (1 - (val - minV) / (maxV - minV)) * cH;
+      if (first) { ctx.moveTo(x, y); first = false; }
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  if (v4Data.length) drawLine(v4Key, '#60a5fa');
+  if (v6Data.length) drawLine(v6Key, '#c084fc');
+
+  const legY = 12;
+  ctx.font = '11px sans-serif';
+  if (v4Data.length) {
+    ctx.fillStyle = '#60a5fa';
+    ctx.fillRect(PAD.l, legY - 6, 12, 3);
+    ctx.fillText('IPv4 ' + unit, PAD.l + 16, legY);
+  }
+  if (v6Data.length) {
+    const offset = v4Data.length ? 90 : 0;
+    ctx.fillStyle = '#c084fc';
+    ctx.fillRect(PAD.l + offset, legY - 6, 12, 3);
+    ctx.fillText('IPv6 ' + unit, PAD.l + offset + 16, legY);
+  }
+}
+
+async function render() {
+  try {
+    const [status, history] = await Promise.all([
+      fetchJSON('/status.json'),
+      fetchJSON('/history.json')
+    ]);
+
+    $('#lastUpdate').textContent = status.last_update || '--';
+    const nextSec = (status.last_ts + status.sleep_seconds) - Math.floor(Date.now() / 1000);
+    $('#nextUpdate').textContent = fmtCountdown(nextSec);
+
+    $('#content').innerHTML = `
+      <div class="cards">${renderCards(status)}</div>
+
+      <div class="section">
+        <div class="section-title">📡 解析域名 (${status.domains.length} 个，各自独立 Zone)</div>
+        <div class="domain-grid">${renderDomains(status)}</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">🏎️ 最新测速结果</div>
+        <div class="table-wrap">${renderTable(status)}</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">📈 历史趋势</div>
+        <div class="tabs">
+          <div class="tab ${chartTab==='latency'?'active':''}" onclick="switchTab('latency')">延迟</div>
+          <div class="tab ${chartTab==='speed'?'active':''}" onclick="switchTab('speed')">速度</div>
+        </div>
+        <div class="chart-box"><canvas id="mainChart"></canvas></div>
+      </div>
+    `;
+
+    drawChart('mainChart', history, chartTab);
+    window._history = history;
+  } catch (e) {
+    console.error(e);
+    if (!$('#content .cards')) {
+      $('#content').innerHTML = `<div class="error-msg">⚠️ 无法加载数据<br><small>等待第一轮测速完成后刷新页面</small></div>`;
+    }
+  }
+}
+
+function switchTab(tab) {
+  chartTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.textContent === (tab === 'latency' ? '延迟' : '速度')));
+  if (window._history) drawChart('mainChart', window._history, chartTab);
+}
+
+window.addEventListener('resize', () => {
+  if (window._history) drawChart('mainChart', window._history, chartTab);
+});
+
+render();
+setInterval(render, 60000);
+</script>
+</body>
+</html>
