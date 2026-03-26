@@ -3,278 +3,715 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CF-DDNS 状态面板</title>
+<title>CF-DDNS · 杏花</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai:wght@300;400;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
+  /* ======= 杏花色板 ======= */
   :root {
-    --bg: #0f1117;
-    --card: #1a1d27;
-    --border: #2a2d3a;
-    --text: #e0e0e0;
-    --text2: #888;
-    --accent: #4f8cff;
-    --green: #34d399;
-    --red: #f87171;
-    --orange: #fbbf24;
-    --purple: #a78bfa;
+    --primary: #7EB8C9;
+    --primary-light: #A8D5E2;
+    --primary-dark: #5A9BAD;
+    --warm: #E8C4A0;
+    --warm-light: #F2DCC2;
+    --warm-deep: #D4956B;
+    --petal: #F5E6E0;
+    --petal-white: #FDFAF7;
+    --petal-border: #EDD5C8;
+    --text-main: #2C3E50;
+    --text-sub: #6B7B8D;
+    --text-muted: #9AACB8;
+    --success: #7EBF8E;
+    --warning: #E2B866;
+    --danger: #D4736E;
+    --info: #7EB8C9;
+
+    --shadow-xs: 0 2px 8px rgba(126,184,201,0.08);
+    --shadow-md: 0 8px 24px rgba(126,184,201,0.15);
+    --shadow-focus: 0 0 0 3px rgba(126,184,201,0.25);
+    --shadow-lg: 0 16px 40px rgba(126,184,201,0.2);
+
+    --radius-sm: 10px;
+    --radius-md: 16px;
+    --radius-lg: 24px;
+    --radius-xl: 32px;
+    --radius-pill: 999px;
+
+    --font-display: "LXGW WenKai", "PingFang SC", sans-serif;
+    --font-body: "Nunito", -apple-system, "PingFang SC", sans-serif;
   }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
+
   body {
-    font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    padding: 20px;
-    max-width: 1200px;
+    font-family: var(--font-body);
+    background: var(--petal);
+    color: var(--text-main);
+    padding: 24px;
+    max-width: 1080px;
     margin: 0 auto;
+    line-height: 1.75;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
   }
-  header {
+
+  /* ======= 全局排版 ======= */
+  h1, h2, h3 { font-family: var(--font-display); }
+
+  /* ======= 头部 ======= */
+  .header {
+    text-align: center;
+    margin-bottom: 32px;
+    padding: 32px 0 24px;
+  }
+  .header-icon {
+    font-size: 36px;
+    margin-bottom: 4px;
+    animation: float 3s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  .header h1 {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-main);
+    letter-spacing: 0.02em;
+  }
+  .header h1 span { color: var(--primary-dark); }
+  .header-meta {
+    font-size: 12px;
+    color: var(--text-sub);
+    margin-top: 6px;
+  }
+  .header-meta .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--success);
+    margin-right: 4px;
+    vertical-align: middle;
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ======= 手动触发区 ======= */
+  .trigger-section {
+    background: var(--petal-white);
+    border: 1px solid var(--petal-border);
+    border-radius: var(--radius-lg);
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-xs);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .trigger-info {
+    flex: 1;
+  }
+  .trigger-info h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .trigger-info p {
+    font-size: 12px;
+    color: var(--text-sub);
+  }
+  .trigger-btn {
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 700;
+    color: white;
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    border: none;
+    border-radius: var(--radius-md);
+    padding: 0 28px;
+    height: 44px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.25,0.46,0.45,0.94);
+    box-shadow: 0 4px 12px rgba(126,184,201,0.3);
+    white-space: nowrap;
+    position: relative;
+    overflow: hidden;
+  }
+  .trigger-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(126,184,201,0.35);
+  }
+  .trigger-btn:active {
+    transform: scale(0.97);
+    box-shadow: 0 1px 4px rgba(126,184,201,0.1);
+    transition: all 0.1s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  .trigger-btn:disabled {
+    background: var(--text-muted);
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+  .trigger-btn .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ======= 进度条 ======= */
+  .progress-wrap {
+    background: var(--petal-white);
+    border: 1px solid var(--petal-border);
+    border-radius: var(--radius-lg);
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-xs);
+    display: none;
+  }
+  .progress-wrap.active { display: block; animation: fadeSlideIn 0.3s ease; }
+  @keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .progress-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 24px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border);
+    margin-bottom: 10px;
   }
-  header h1 { font-size: 20px; font-weight: 600; }
-  header h1 span { color: var(--accent); }
-  .meta { font-size: 13px; color: var(--text2); text-align: right; }
-  .meta .live { color: var(--green); }
+  .progress-label {
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-main);
+  }
+  .progress-pct {
+    font-family: var(--font-body);
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--primary-dark);
+  }
+  .progress-track {
+    width: 100%;
+    height: 10px;
+    background: var(--petal);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: var(--radius-pill);
+    background: linear-gradient(90deg, var(--primary), var(--primary-light), var(--primary));
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+    transition: width 0.5s cubic-bezier(0.25,0.46,0.45,0.94);
+  }
+  @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  .progress-msg {
+    font-size: 12px;
+    color: var(--text-sub);
+    margin-top: 8px;
+  }
 
+  /* ======= 统计卡片 ======= */
   .cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 14px;
-    margin-bottom: 24px;
+    margin-bottom: 20px;
   }
   .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
+    background: var(--petal-white);
+    border: 1px solid var(--petal-border);
+    border-radius: var(--radius-lg);
+    padding: 18px;
+    box-shadow: var(--shadow-xs);
+    transition: all 0.2s cubic-bezier(0.25,0.46,0.45,0.94);
   }
-  .card .label { font-size: 12px; color: var(--text2); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .card .value { font-size: 24px; font-weight: 700; }
-  .card .value.good { color: var(--green); }
-  .card .value.warn { color: var(--orange); }
-  .card .value.bad { color: var(--red); }
-  .card .sub { font-size: 12px; color: var(--text2); margin-top: 4px; }
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary-light);
+  }
+  .card .label {
+    font-family: var(--font-display);
+    font-size: 12px;
+    color: var(--text-sub);
+    margin-bottom: 8px;
+    letter-spacing: 0.5px;
+  }
+  .card .value {
+    font-family: var(--font-body);
+    font-size: 28px;
+    font-weight: 800;
+  }
+  .card .value.good { color: var(--success); }
+  .card .value.warn { color: var(--warning); }
+  .card .value.bad { color: var(--danger); }
+  .card .value.off { color: var(--text-muted); font-size: 16px; }
+  .card .sub {
+    font-size: 12px;
+    color: var(--text-sub);
+    margin-top: 4px;
+  }
 
-  .section { margin-bottom: 24px; }
-  .section-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--text2); }
+  /* ======= 区域标题 ======= */
+  .section { margin-bottom: 20px; }
+  .section-title {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 14px;
+    padding-left: 2px;
+  }
+  .section-title .emoji { margin-right: 4px; }
+
+  /* ======= 域名卡片 ======= */
   .domain-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 12px;
   }
   .domain-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px;
+    background: var(--petal-white);
+    border: 1px solid var(--petal-border);
+    border-radius: var(--radius-lg);
+    padding: 16px 18px;
+    box-shadow: var(--shadow-xs);
+    transition: all 0.2s ease;
+  }
+  .domain-card:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary-light);
   }
   .domain-card h3 {
     font-size: 14px;
-    font-weight: 600;
-    color: var(--accent);
-    margin-bottom: 8px;
+    font-weight: 700;
+    color: var(--primary-dark);
+    margin-bottom: 4px;
     word-break: break-all;
   }
-  .domain-card .zone-hint {
-    font-size: 11px;
-    color: var(--text2);
-    margin-bottom: 8px;
+  .domain-card .zone-tag {
+    display: inline-block;
+    font-size: 10px;
+    color: var(--text-sub);
+    background: var(--petal);
+    border-radius: var(--radius-pill);
+    padding: 2px 8px;
+    margin-bottom: 10px;
   }
   .ip-tag {
     display: inline-block;
-    background: #262a38;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 3px 8px;
+    background: var(--petal);
+    border: 1px solid var(--petal-border);
+    border-radius: var(--radius-sm);
+    padding: 3px 10px;
     margin: 2px 4px 2px 0;
     font-size: 12px;
-    font-family: "SF Mono", "Fira Code", monospace;
+    font-family: "Nunito", monospace;
+    font-weight: 600;
+    color: var(--text-main);
+    transition: all 0.15s;
+  }
+  .ip-tag:hover {
+    background: var(--primary-light);
+    border-color: var(--primary);
+    color: var(--primary-dark);
   }
 
+  /* ======= IP 表格 ======= */
   .table-wrap {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    background: var(--petal-white);
+    border: 1px solid var(--petal-border);
+    border-radius: var(--radius-lg);
     overflow: hidden;
+    box-shadow: var(--shadow-xs);
   }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th {
     text-align: left;
-    padding: 10px 14px;
-    background: #1e2130;
-    color: var(--text2);
-    font-weight: 500;
+    padding: 12px 16px;
+    background: var(--petal);
+    color: var(--text-sub);
+    font-family: var(--font-display);
+    font-weight: 400;
     font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
   }
-  td { padding: 9px 14px; border-top: 1px solid var(--border); font-family: "SF Mono", "Fira Code", monospace; font-size: 13px; }
-  tr:hover td { background: #1e2130; }
+  td {
+    padding: 10px 16px;
+    border-top: 1px solid var(--petal-border);
+    font-family: "Nunito", monospace;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  tr { transition: background 0.15s; }
+  tr:hover td { background: rgba(168,213,226,0.08); }
   .badge {
     display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
+    padding: 2px 10px;
+    border-radius: var(--radius-pill);
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: 0.3px;
   }
-  .badge-v4 { background: #1e3a5f; color: #60a5fa; }
-  .badge-v6 { background: #3b1f5e; color: #c084fc; }
+  .badge-v4 { background: rgba(126,184,201,0.15); color: var(--primary-dark); }
+  .badge-v6 { background: rgba(212,149,107,0.15); color: var(--warm-deep); }
 
+  /* ======= 图表 ======= */
   .chart-box {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
+    background: var(--petal-white);
+    border: 1px solid var(--petal-border);
+    border-radius: var(--radius-lg);
+    padding: 18px;
+    box-shadow: var(--shadow-xs);
   }
   canvas { width: 100%; height: 220px; }
-
-  .footer { text-align: center; padding: 20px 0 8px; font-size: 12px; color: #444; }
-
-  .loading { text-align: center; padding: 60px; color: var(--text2); }
-  .error-msg { text-align: center; padding: 40px; color: var(--red); }
-
-  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
   .tab {
-    padding: 5px 14px;
-    border-radius: 6px;
+    font-family: var(--font-display);
+    padding: 5px 16px;
+    border-radius: var(--radius-pill);
     font-size: 13px;
     cursor: pointer;
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text2);
-    transition: all .15s;
+    background: var(--petal);
+    border: 1px solid var(--petal-border);
+    color: var(--text-sub);
+    transition: all 0.2s cubic-bezier(0.25,0.46,0.45,0.94);
+    font-weight: 400;
+    height: 28px;
+    display: flex;
+    align-items: center;
   }
-  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tab:hover { border-color: var(--primary-light); color: var(--primary-dark); }
+  .tab.active {
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    color: white;
+    border-color: transparent;
+    font-weight: 700;
+    box-shadow: 0 2px 8px rgba(126,184,201,0.25);
+  }
 
+  /* ======= Toast ======= */
+  .toast-container {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .toast {
+    font-family: var(--font-display);
+    background: var(--petal-white);
+    border: 1px solid var(--petal-border);
+    border-radius: var(--radius-md);
+    padding: 10px 20px;
+    font-size: 13px;
+    color: var(--text-main);
+    box-shadow: var(--shadow-lg);
+    animation: toastIn 0.4s cubic-bezier(0.34,1.56,0.64,1);
+    pointer-events: auto;
+  }
+  .toast.leaving { animation: toastOut 0.3s ease forwards; }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateY(20px) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes toastOut {
+    to { opacity: 0; transform: translateY(10px) scale(0.95); }
+  }
+
+  /* ======= 空态 ======= */
+  .empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--text-sub);
+  }
+  .empty-state .icon { font-size: 36px; margin-bottom: 8px; }
+  .empty-state p { font-family: var(--font-display); font-size: 14px; }
+
+  /* ======= 页脚 ======= */
+  .footer {
+    text-align: center;
+    padding: 24px 0 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-display);
+  }
+
+  /* ======= 响应式 ======= */
   @media (max-width: 600px) {
-    body { padding: 12px; }
-    .cards { grid-template-columns: repeat(2, 1fr); }
-    .card .value { font-size: 20px; }
+    body { padding: 14px; }
+    .cards { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .card .value { font-size: 22px; }
+    .trigger-section { flex-direction: column; text-align: center; }
+    .trigger-btn { width: 100%; }
+    .header h1 { font-size: 20px; }
+    .domain-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>⚡ <span>CF-DDNS</span> 状态面板</h1>
-  <div class="meta">
-    <div>上次更新: <span id="lastUpdate">--</span></div>
-    <div>下次预估: <span id="nextUpdate">--</span></div>
-    <div class="live" id="autoRefresh">● 每 60 秒自动刷新</div>
+<!-- Toast 容器 -->
+<div class="toast-container" id="toasts"></div>
+
+<!-- 头部 -->
+<div class="header">
+  <div class="header-icon">🌸</div>
+  <h1><span>CF-DDNS</span> · 杏花</h1>
+  <div class="header-meta">
+    <span class="dot"></span>
+    <span id="metaLine">加载中...</span>
   </div>
-</header>
+</div>
 
-<div id="content"><div class="loading">正在加载数据...</div></div>
+<!-- 手动触发 -->
+<div class="trigger-section">
+  <div class="trigger-info">
+    <h3>🔍 手动扫描</h3>
+    <p id="triggerHint">跳过等待，立刻执行一次全量测速</p>
+  </div>
+  <button class="trigger-btn" id="triggerBtn" onclick="triggerScan()">
+    立即测速
+  </button>
+</div>
 
-<div class="footer">CF-DDNS v6 · 数据保留最近 <span id="histMax">200</span> 条</div>
+<!-- 进度条 -->
+<div class="progress-wrap" id="progressWrap">
+  <div class="progress-header">
+    <span class="progress-label" id="progressLabel">测速中</span>
+    <span class="progress-pct" id="progressPct">0%</span>
+  </div>
+  <div class="progress-track">
+    <div class="progress-fill" id="progressFill" style="width:0%"></div>
+  </div>
+  <div class="progress-msg" id="progressMsg">准备中...</div>
+</div>
+
+<!-- 主内容 -->
+<div id="content">
+  <div class="empty-state">
+    <div class="icon">🌿</div>
+    <p>正在等待数据...</p>
+  </div>
+</div>
+
+<div class="footer">CF-DDNS v7 · 杏花面板 · 自动刷新中</div>
 
 <script>
 const $ = s => document.querySelector(s);
-const DATA_BASE = '/data';
 let chartTab = 'latency';
 
+/* ======= Toast 通知 ======= */
+function showToast(msg, duration = 3000) {
+  const container = $('#toasts');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('leaving');
+    setTimeout(() => el.remove(), 300);
+  }, duration);
+}
+
+/* ======= 数据获取 ======= */
 async function fetchJSON(path) {
-  const r = await fetch(DATA_BASE + path + '?t=' + Date.now());
+  const r = await fetch('/data' + path + '?t=' + Date.now());
   if (!r.ok) throw new Error(r.status);
   return r.json();
 }
 
-function fmtCountdown(seconds) {
-  if (!seconds || seconds <= 0) return '计算中...';
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return h + '小时' + m + '分钟';
-  return m + '分钟';
+/* ======= 手动触发 ======= */
+async function triggerScan() {
+  const btn = $('#triggerBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>发送中...';
+  try {
+    const r = await fetch('/cgi-bin/trigger.sh', { method: 'POST' });
+    const j = await r.json();
+    if (j.ok) {
+      showToast('✨ 已触发手动扫描');
+      btn.innerHTML = '等待启动...';
+    } else {
+      showToast('⏳ ' + j.msg);
+      btn.innerHTML = '立即测速';
+      btn.disabled = false;
+    }
+  } catch (e) {
+    showToast('❌ 触发失败');
+    btn.innerHTML = '立即测速';
+    btn.disabled = false;
+  }
 }
 
-function latencyClass(val, abort) {
-  if (!val || val === null) return '';
+/* ======= 进度条轮询 ======= */
+let progressTimer = null;
+async function pollProgress() {
+  try {
+    const p = await fetchJSON('/progress.json');
+    const wrap = $('#progressWrap');
+    const btn = $('#triggerBtn');
+
+    if (p.active) {
+      wrap.classList.add('active');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>扫描中...';
+
+      $('#progressFill').style.width = p.percent + '%';
+      $('#progressPct').textContent = p.percent + '%';
+      $('#progressLabel').textContent = phaseLabel(p.phase);
+      $('#progressMsg').textContent = p.message;
+
+      if (!progressTimer) {
+        progressTimer = setInterval(pollProgress, 1500);
+      }
+    } else {
+      wrap.classList.remove('active');
+      btn.disabled = false;
+      btn.innerHTML = '立即测速';
+
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+    }
+  } catch (e) { /* progress.json not ready yet */ }
+}
+
+function phaseLabel(phase) {
+  const m = {
+    starting: '启动中',
+    speedtest_IPv4: 'IPv4 测速',
+    speedtest_IPv6: 'IPv6 测速',
+    dns_update: 'DNS 更新',
+    meltdown: '熔断保护',
+    persist: '保存结果',
+    done: '完成',
+    sleeping: '休眠中',
+    idle: '待机'
+  };
+  return m[phase] || phase;
+}
+
+/* ======= 工具函数 ======= */
+function fmtCountdown(sec) {
+  if (!sec || sec <= 0) return '即将开始';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return h + ' 小时 ' + m + ' 分钟';
+  if (m > 0) return m + ' 分钟';
+  return '不到 1 分钟';
+}
+
+function latClass(val, abort) {
+  if (!val) return '';
   if (val < abort * 0.5) return 'good';
   if (val < abort * 0.8) return 'warn';
   return 'bad';
 }
 
+/* ======= 渲染卡片 ======= */
 function renderCards(st) {
   const now = Math.floor(Date.now() / 1000);
   const nextSec = (st.last_ts + st.sleep_seconds) - now;
-  const v4Lat = st.ipv4.enabled ? st.ipv4.top_latency : null;
-  const v6Lat = st.ipv6.enabled ? st.ipv6.top_latency : null;
-  const v4Cnt = st.ipv4.enabled ? st.ipv4.ips.length : 0;
-  const v6Cnt = st.ipv6.enabled ? st.ipv6.ips.length : 0;
+  const v4L = st.ipv4.enabled ? st.ipv4.top_latency : null;
+  const v6L = st.ipv6.enabled ? st.ipv6.top_latency : null;
+  const v4N = st.ipv4.enabled ? st.ipv4.ips.length : 0;
+  const v6N = st.ipv6.enabled ? st.ipv6.ips.length : 0;
 
-  let features = [];
-  if (st.smart_interval) features.push('智能调度');
-  if (st.canary_mode) features.push('金丝雀');
-  const featStr = features.length > 0 ? features.join(' + ') : '标准模式';
+  let feats = [];
+  if (st.smart_interval) feats.push('智能调度');
+  if (st.canary_mode) feats.push('金丝雀');
+  const featStr = feats.length ? feats.join(' · ') : '标准模式';
 
   return `
     <div class="card">
       <div class="label">IPv4 延迟</div>
-      <div class="value ${st.ipv4.enabled ? latencyClass(v4Lat, st.abort_latency) : ''}">${st.ipv4.enabled ? (v4Lat !== null ? v4Lat + ' ms' : '无数据') : '未启用'}</div>
-      <div class="sub">${v4Cnt} 个活跃 IP</div>
+      <div class="value ${st.ipv4.enabled ? latClass(v4L, st.abort_latency) : 'off'}">${st.ipv4.enabled ? (v4L != null ? v4L + '<small style="font-size:14px"> ms</small>' : '—') : '未启用'}</div>
+      <div class="sub">${v4N} 个活跃 IP</div>
     </div>
     <div class="card">
       <div class="label">IPv6 延迟</div>
-      <div class="value ${st.ipv6.enabled ? latencyClass(v6Lat, st.abort_latency) : ''}">${st.ipv6.enabled ? (v6Lat !== null ? v6Lat + ' ms' : '无数据') : '未启用'}</div>
-      <div class="sub">${v6Cnt} 个活跃 IP</div>
+      <div class="value ${st.ipv6.enabled ? latClass(v6L, st.abort_latency) : 'off'}">${st.ipv6.enabled ? (v6L != null ? v6L + '<small style="font-size:14px"> ms</small>' : '—') : '未启用'}</div>
+      <div class="sub">${v6N} 个活跃 IP</div>
     </div>
     <div class="card">
       <div class="label">下次更新</div>
-      <div class="value" style="font-size:20px">${fmtCountdown(nextSec)}</div>
-      <div class="sub">休眠 ${st.sleep_seconds} 秒</div>
+      <div class="value" style="font-size:18px;color:var(--primary-dark)">${fmtCountdown(nextSec)}</div>
+      <div class="sub">间隔 ${Math.round(st.sleep_seconds/60)} 分钟</div>
     </div>
     <div class="card">
       <div class="label">运行模式</div>
-      <div class="value" style="font-size:16px;color:var(--purple)">${featStr}</div>
-      <div class="sub">熔断阈值 ${st.abort_latency} ms</div>
-    </div>
-  `;
+      <div class="value" style="font-size:15px;color:var(--warm-deep)">${featStr}</div>
+      <div class="sub">熔断 ${st.abort_latency} ms</div>
+    </div>`;
 }
 
+/* ======= 渲染域名 ======= */
 function renderDomains(st) {
-  if (!st.domains || st.domains.length === 0) return '';
   const allIps = [];
-  if (st.ipv4.enabled) st.ipv4.ips.forEach(i => allIps.push({...i, type: 'A'}));
-  if (st.ipv6.enabled) st.ipv6.ips.forEach(i => allIps.push({...i, type: 'AAAA'}));
-  const ipTags = allIps.map(i => `<span class="ip-tag">${i.ip}</span>`).join('');
+  if (st.ipv4.enabled) st.ipv4.ips.forEach(i => allIps.push(i));
+  if (st.ipv6.enabled) st.ipv6.ips.forEach(i => allIps.push(i));
+  const tags = allIps.map(i => `<span class="ip-tag">${i.ip}</span>`).join('');
 
   return st.domains.map((d, idx) => `
     <div class="domain-card">
       <h3>${d}</h3>
-      <div class="zone-hint">独立 Zone #${idx + 1}</div>
-      ${ipTags || '<span style="color:var(--text2);font-size:12px">暂无解析记录</span>'}
-    </div>
-  `).join('');
+      <span class="zone-tag">Zone #${idx + 1}</span>
+      <div>${tags || '<span style="color:var(--text-muted);font-size:12px">暂无记录</span>'}</div>
+    </div>`).join('');
 }
 
+/* ======= 渲染表格 ======= */
 function renderTable(st) {
   let rows = '';
-  const addRows = (ips, type, badge) => {
+  const add = (ips, type, cls) => {
     ips.forEach((ip, i) => {
       rows += `<tr>
-        <td><span class="badge ${badge}">${type}</span></td>
+        <td><span class="badge ${cls}">${type}</span></td>
         <td>${ip.ip}</td>
-        <td class="${latencyClass(ip.latency, st.abort_latency)}">${ip.latency} ms</td>
+        <td style="color:var(--${latClass(ip.latency, st.abort_latency) === 'good' ? 'success' : latClass(ip.latency, st.abort_latency) === 'warn' ? 'warning' : latClass(ip.latency, st.abort_latency) === 'bad' ? 'danger' : 'text-main'})">${ip.latency} ms</td>
         <td>${ip.speed} MB/s</td>
-        <td>${i === 0 ? '👑' : '#' + (i+1)}</td>
+        <td style="text-align:center">${i === 0 ? '👑' : '#' + (i + 1)}</td>
       </tr>`;
     });
   };
-  if (st.ipv4.enabled && st.ipv4.ips.length) addRows(st.ipv4.ips, 'A', 'badge-v4');
-  if (st.ipv6.enabled && st.ipv6.ips.length) addRows(st.ipv6.ips, 'AAAA', 'badge-v6');
+  if (st.ipv4.enabled && st.ipv4.ips.length) add(st.ipv4.ips, 'A', 'badge-v4');
+  if (st.ipv6.enabled && st.ipv6.ips.length) add(st.ipv6.ips, 'AAAA', 'badge-v6');
 
-  if (!rows) return '<div style="padding:20px;text-align:center;color:var(--text2)">暂无测速数据</div>';
+  if (!rows) return '<div style="padding:28px;text-align:center;color:var(--text-muted);font-family:var(--font-display)">等待第一轮测速 🌿</div>';
   return `<table>
-    <tr><th>类型</th><th>IP 地址</th><th>延迟</th><th>速度</th><th>排名</th></tr>
+    <tr><th>类型</th><th>IP 地址</th><th>延迟</th><th>速度</th><th style="text-align:center">排名</th></tr>
     ${rows}
   </table>`;
 }
 
-function drawChart(canvasId, history, mode) {
-  const canvas = document.getElementById(canvasId);
+/* ======= Canvas 折线图 ======= */
+function drawChart(id, history, mode) {
+  const canvas = document.getElementById(id);
   if (!canvas || !history.length) return;
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
@@ -285,91 +722,93 @@ function drawChart(canvasId, history, mode) {
   canvas.style.height = '220px';
   ctx.scale(dpr, dpr);
   const W = rect.width, H = 220;
-  const PAD = { t: 20, r: 16, b: 36, l: 52 };
-  const cW = W - PAD.l - PAD.r, cH = H - PAD.t - PAD.b;
-
+  const P = { t: 22, r: 16, b: 36, l: 52 };
+  const cW = W - P.l - P.r, cH = H - P.t - P.b;
   ctx.clearRect(0, 0, W, H);
 
-  const v4Key = mode === 'latency' ? 'v4_lat' : 'v4_spd';
-  const v6Key = mode === 'latency' ? 'v6_lat' : 'v6_spd';
+  const v4K = mode === 'latency' ? 'v4_lat' : 'v4_spd';
+  const v6K = mode === 'latency' ? 'v6_lat' : 'v6_spd';
   const unit = mode === 'latency' ? 'ms' : 'MB/s';
 
-  const v4Data = history.map(h => h[v4Key]).filter(v => v !== null && v !== undefined);
-  const v6Data = history.map(h => h[v6Key]).filter(v => v !== null && v !== undefined);
-  const allVals = [...v4Data, ...v6Data];
-  if (!allVals.length) {
-    ctx.fillStyle = '#555';
-    ctx.font = '13px sans-serif';
+  const v4D = history.map(h => h[v4K]).filter(v => v != null);
+  const v6D = history.map(h => h[v6K]).filter(v => v != null);
+  const all = [...v4D, ...v6D];
+  if (!all.length) {
+    ctx.fillStyle = '#9AACB8';
+    ctx.font = '13px LXGW WenKai, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('暂无历史数据', W/2, H/2);
+    ctx.fillText('暂无历史数据', W / 2, H / 2);
     return;
   }
 
-  let minV = Math.min(...allVals) * 0.9;
-  let maxV = Math.max(...allVals) * 1.1;
-  if (maxV === minV) { maxV += 10; minV = Math.max(0, minV - 10); }
-  if (minV < 0) minV = 0;
-
+  let mn = Math.min(...all) * 0.9, mx = Math.max(...all) * 1.1;
+  if (mx === mn) { mx += 10; mn = Math.max(0, mn - 10); }
+  if (mn < 0) mn = 0;
   const n = history.length;
 
-  ctx.strokeStyle = '#222633';
-  ctx.lineWidth = 1;
+  // 网格
+  ctx.strokeStyle = '#EDD5C8';
+  ctx.lineWidth = 0.5;
   for (let i = 0; i <= 4; i++) {
-    const y = PAD.t + (cH / 4) * i;
-    ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W - PAD.r, y); ctx.stroke();
-    const val = maxV - (maxV - minV) * (i / 4);
-    ctx.fillStyle = '#555';
-    ctx.font = '11px sans-serif';
+    const y = P.t + (cH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(W - P.r, y); ctx.stroke();
+    ctx.fillStyle = '#9AACB8';
+    ctx.font = '10px Nunito, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText(val.toFixed(1), PAD.l - 6, y + 4);
+    ctx.fillText((mx - (mx - mn) * i / 4).toFixed(1), P.l - 6, y + 3);
   }
 
-  ctx.fillStyle = '#555';
-  ctx.font = '10px sans-serif';
+  // X 轴
+  ctx.fillStyle = '#9AACB8';
+  ctx.font = '10px Nunito, sans-serif';
   ctx.textAlign = 'center';
-  const labelCount = Math.min(6, n);
-  for (let i = 0; i < labelCount; i++) {
-    const idx = Math.round(i * (n - 1) / Math.max(labelCount - 1, 1));
-    const x = PAD.l + (idx / Math.max(n - 1, 1)) * cW;
-    const label = history[idx].time.slice(5, 16);
-    ctx.fillText(label, x, H - PAD.b + 16);
+  const lc = Math.min(6, n);
+  for (let i = 0; i < lc; i++) {
+    const idx = Math.round(i * (n - 1) / Math.max(lc - 1, 1));
+    const x = P.l + (idx / Math.max(n - 1, 1)) * cW;
+    ctx.fillText(history[idx].time.slice(5, 16), x, H - P.b + 16);
   }
 
-  function drawLine(keyName, color) {
+  function line(key, color) {
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.5;
     ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
     ctx.beginPath();
     let first = true;
     history.forEach((h, i) => {
-      const val = h[keyName];
-      if (val === null || val === undefined) return;
-      const x = PAD.l + (i / Math.max(n - 1, 1)) * cW;
-      const y = PAD.t + (1 - (val - minV) / (maxV - minV)) * cH;
-      if (first) { ctx.moveTo(x, y); first = false; }
-      else ctx.lineTo(x, y);
+      if (h[key] == null) return;
+      const x = P.l + (i / Math.max(n - 1, 1)) * cW;
+      const y = P.t + (1 - (h[key] - mn) / (mx - mn)) * cH;
+      first ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      first = false;
     });
     ctx.stroke();
   }
 
-  if (v4Data.length) drawLine(v4Key, '#60a5fa');
-  if (v6Data.length) drawLine(v6Key, '#c084fc');
+  if (v4D.length) line(v4K, '#7EB8C9');
+  if (v6D.length) line(v6K, '#D4956B');
 
-  const legY = 12;
-  ctx.font = '11px sans-serif';
-  if (v4Data.length) {
-    ctx.fillStyle = '#60a5fa';
-    ctx.fillRect(PAD.l, legY - 6, 12, 3);
-    ctx.fillText('IPv4 ' + unit, PAD.l + 16, legY);
+  // 图例
+  ctx.font = '11px Nunito, sans-serif';
+  let lx = P.l;
+  if (v4D.length) {
+    ctx.fillStyle = '#7EB8C9';
+    ctx.fillRect(lx, 10, 14, 3);
+    ctx.fillStyle = '#6B7B8D';
+    ctx.textAlign = 'left';
+    ctx.fillText('IPv4 ' + unit, lx + 18, 14);
+    lx += 85;
   }
-  if (v6Data.length) {
-    const offset = v4Data.length ? 90 : 0;
-    ctx.fillStyle = '#c084fc';
-    ctx.fillRect(PAD.l + offset, legY - 6, 12, 3);
-    ctx.fillText('IPv6 ' + unit, PAD.l + offset + 16, legY);
+  if (v6D.length) {
+    ctx.fillStyle = '#D4956B';
+    ctx.fillRect(lx, 10, 14, 3);
+    ctx.fillStyle = '#6B7B8D';
+    ctx.fillText('IPv6 ' + unit, lx + 18, 14);
   }
 }
 
+/* ======= 主渲染 ======= */
 async function render() {
   try {
     const [status, history] = await Promise.all([
@@ -377,55 +816,56 @@ async function render() {
       fetchJSON('/history.json')
     ]);
 
-    $('#lastUpdate').textContent = status.last_update || '--';
-    const nextSec = (status.last_ts + status.sleep_seconds) - Math.floor(Date.now() / 1000);
-    $('#nextUpdate').textContent = fmtCountdown(nextSec);
+    const now = Math.floor(Date.now() / 1000);
+    const nextSec = (status.last_ts + status.sleep_seconds) - now;
+    $('#metaLine').innerHTML = `上次 ${status.last_update || '--'}　·　下次约 ${fmtCountdown(nextSec)}`;
 
     $('#content').innerHTML = `
       <div class="cards">${renderCards(status)}</div>
 
       <div class="section">
-        <div class="section-title">📡 解析域名 (${status.domains.length} 个，各自独立 Zone)</div>
+        <div class="section-title"><span class="emoji">📡</span>解析域名</div>
         <div class="domain-grid">${renderDomains(status)}</div>
       </div>
 
       <div class="section">
-        <div class="section-title">🏎️ 最新测速结果</div>
+        <div class="section-title"><span class="emoji">🏎️</span>测速结果</div>
         <div class="table-wrap">${renderTable(status)}</div>
       </div>
 
       <div class="section">
-        <div class="section-title">📈 历史趋势</div>
+        <div class="section-title"><span class="emoji">📈</span>历史趋势</div>
         <div class="tabs">
-          <div class="tab ${chartTab==='latency'?'active':''}" onclick="switchTab('latency')">延迟</div>
-          <div class="tab ${chartTab==='speed'?'active':''}" onclick="switchTab('speed')">速度</div>
+          <div class="tab ${chartTab === 'latency' ? 'active' : ''}" onclick="switchTab('latency')">延迟</div>
+          <div class="tab ${chartTab === 'speed' ? 'active' : ''}" onclick="switchTab('speed')">速度</div>
         </div>
-        <div class="chart-box"><canvas id="mainChart"></canvas></div>
-      </div>
-    `;
+        <div class="chart-box"><canvas id="chart"></canvas></div>
+      </div>`;
 
-    drawChart('mainChart', history, chartTab);
+    drawChart('chart', history, chartTab);
     window._history = history;
   } catch (e) {
     console.error(e);
-    if (!$('#content .cards')) {
-      $('#content').innerHTML = `<div class="error-msg">⚠️ 无法加载数据<br><small>等待第一轮测速完成后刷新页面</small></div>`;
-    }
   }
 }
 
-function switchTab(tab) {
-  chartTab = tab;
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.textContent === (tab === 'latency' ? '延迟' : '速度')));
-  if (window._history) drawChart('mainChart', window._history, chartTab);
+function switchTab(t) {
+  chartTab = t;
+  document.querySelectorAll('.tab').forEach(el =>
+    el.classList.toggle('active', el.textContent === (t === 'latency' ? '延迟' : '速度'))
+  );
+  if (window._history) drawChart('chart', window._history, chartTab);
 }
 
 window.addEventListener('resize', () => {
-  if (window._history) drawChart('mainChart', window._history, chartTab);
+  if (window._history) drawChart('chart', window._history, chartTab);
 });
 
+/* ======= 启动 ======= */
 render();
+pollProgress();
 setInterval(render, 60000);
+setInterval(pollProgress, 5000);
 </script>
 </body>
 </html>

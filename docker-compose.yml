@@ -1,7 +1,7 @@
 services:
   cf-autoupdate:
     build: .
-    image: cf-ddns-arm64:v6
+    image: cf-ddns-arm64:v7
     container_name: cf-ddns-updater
     restart: always
     network_mode: "host"
@@ -20,8 +20,8 @@ services:
       - ENABLE_IPV6=true
       - ABORT_LATENCY=300
 
-      # --- 渐进式更新（金丝雀） ---
-      - CANARY_MODE=false
+      # --- 渐进式更新 ---
+      - CANARY_MODE=true
       - CANARY_MAX_CHANGES=1
 
       # --- 失败重试 ---
