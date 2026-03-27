@@ -596,6 +596,8 @@ async function pollProgress() {
       if (progressTimer) {
         clearInterval(progressTimer);
         progressTimer = null;
+        showToast('✅ 扫描完成，正在刷新数据...'); 
+        render();
       }
     }
   } catch (e) { /* progress.json not ready yet */ }
