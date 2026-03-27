@@ -355,7 +355,7 @@ run_speedtest() {
         return
     fi
 
-    local BEST_IPS=$(awk -F, 'NR>1 && $5>0{print $1}' "$RESULT_FILE" | head -n ${IP_COUNT} | tr -d ' \r\n')
+    local BEST_IPS=$(awk -F, 'NR>1 && $5>0{print $1}' "$RESULT_FILE" | head -n ${IP_COUNT} | tr -d ' \r')
     echo "  ✅ 测速达标 (Top1: ${TOP_LATENCY}ms)"
 
     local DOMAIN_COUNT=${#DOMAIN_NAMES[@]}
