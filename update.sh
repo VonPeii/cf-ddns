@@ -211,7 +211,7 @@ persist_results() {
     local IPV4_DATA="[]" IPV4_TOP_LAT="null" IPV4_TOP_SPEED="null"
     if [ "$ENABLE_IPV4" = "true" ] && [ -f "/app/result_IPv4.csv" ]; then
         IPV4_DATA=$(awk -F, 'NR>1 && $5>0 {
-            gsub(/ /,"",$1); gsub(/ /,"",$5); gsub(/ /,"",$6)
+            gsub(/[ \r\n]/,"",$1); gsub(/[ \r\n]/,"",$5); gsub(/[ \r\n]/,"",$6)
             printf "{\"ip\":\"%s\",\"latency\":%s,\"speed\":%s}\n",$1,$5,$6
         }' /app/result_IPv4.csv | head -n "$IP_COUNT" | jq -s '.' 2>/dev/null)
         [ -z "$IPV4_DATA" ] && IPV4_DATA="[]"
@@ -222,7 +222,7 @@ persist_results() {
     local IPV6_DATA="[]" IPV6_TOP_LAT="null" IPV6_TOP_SPEED="null"
     if [ "$ENABLE_IPV6" = "true" ] && [ -f "/app/result_IPv6.csv" ]; then
         IPV6_DATA=$(awk -F, 'NR>1 && $5>0 {
-            gsub(/ /,"",$1); gsub(/ /,"",$5); gsub(/ /,"",$6)
+            gsub(/[ \r\n]/,"",$1); gsub(/[ \r\n]/,"",$5); gsub(/[ \r\n]/,"",$6)
             printf "{\"ip\":\"%s\",\"latency\":%s,\"speed\":%s}\n",$1,$5,$6
         }' /app/result_IPv6.csv | head -n "$IP_COUNT" | jq -s '.' 2>/dev/null)
         [ -z "$IPV6_DATA" ] && IPV6_DATA="[]"
@@ -321,21 +321,32 @@ update_dns_for_domain() {
 # =========================================================
 # 测速 + 分发（带进度上报）
 # =========================================================
+# =========================================================
+# 测速 + 分发（带进度上报）
+# =========================================================
 run_speedtest() {
-    local TYPE=$1 REC_TYPE="A" RESULT_FILE="/app/result_${TYPE}.csv"
+    local TYPE=$1 REC_TYPE="A" 
+    local RESULT_FILE="/app/result_${TYPE}.csv"
+    local TMP_FILE="/tmp/result_${TYPE}_tmp.csv"
     local BASE_PCT=$2 SPAN_PCT=$3
 
-    local -a CFST_ARGS=(-o "$RESULT_FILE" -tl "$CFST_TL" -sl "$CFST_SL" -url "$CFST_URL")
+    local -a CFST_ARGS=(-o "$TMP_FILE" -tl "$CFST_TL" -sl "$CFST_SL" -url "$CFST_URL")
     [ "$TYPE" = "IPv6" ] && { CFST_ARGS+=(-ipv6); REC_TYPE="AAAA"; }
 
     report_progress "speedtest_${TYPE}" "$BASE_PCT" "正在测速 ${TYPE}..."
     echo "[$(date '+%H:%M:%S')] 开始测速: ${TYPE} ..."
     /app/cfst "${CFST_ARGS[@]}" > /dev/null 2>&1
 
-    [ ! -f "$RESULT_FILE" ] && { echo "  ⚠️ ${TYPE} 结果文件不存在"; return; }
+    [ ! -f "$TMP_FILE" ] && { echo "  ⚠️ ${TYPE} 结果文件不存在"; return; }
 
-    local TOP_LATENCY=$(awk -F, 'NR==2{print $5}' "$RESULT_FILE" | tr -d ' ')
-    [ -z "$TOP_LATENCY" ] || [ "$TOP_LATENCY" = "0.00" ] && { echo "  ⚠️ ${TYPE} 测速失败"; return; }
+    local TOP_LATENCY=$(awk -F, 'NR==2{print $5}' "$TMP_FILE" | tr -d ' \r\n')
+    if [ -z "$TOP_LATENCY" ] || [ "$TOP_LATENCY" = "0.00" ]; then
+        echo "  ⚠️ ${TYPE} 测速失败或无达标IP，保留上次有效结果"
+        return
+    fi
+
+    # 🚨 核心修复点：只有测速成功了，才覆盖掉正式的结果文件！
+    mv -f "$TMP_FILE" "$RESULT_FILE"
 
     local IS_MELT=$(awk -v l="$TOP_LATENCY" -v a="$ABORT_LATENCY" 'BEGIN{print(l>a?1:0)}')
     if [ "$IS_MELT" -eq 1 ]; then
@@ -344,7 +355,7 @@ run_speedtest() {
         return
     fi
 
-    local BEST_IPS=$(awk -F, 'NR>1 && $5>0{print $1}' "$RESULT_FILE" | head -n ${IP_COUNT})
+    local BEST_IPS=$(awk -F, 'NR>1 && $5>0{print $1}' "$RESULT_FILE" | head -n ${IP_COUNT} | tr -d ' \r\n')
     echo "  ✅ 测速达标 (Top1: ${TOP_LATENCY}ms)"
 
     local DOMAIN_COUNT=${#DOMAIN_NAMES[@]}
