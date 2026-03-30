@@ -32,6 +32,7 @@ DATA_DIR="${WEB_DIR}/data"
 HISTORY_MAX=${HISTORY_MAX:-200}
 
 ROUND_HAS_CHANGES=0
+ROUND_HAS_VALID_RESULT=0
 
 # =========================================================
 # 校验工具
@@ -40,6 +41,16 @@ fail_startup() {
     echo "❌ $1" >&2
     exit 1
 }
+
+log() {
+    local LEVEL="$1"
+    shift
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [${LEVEL}] $*"
+}
+
+log_info() { log INFO "$@"; }
+log_warn() { log WARN "$@"; }
+log_error() { log ERROR "$@"; }
 
 is_uint() {
     [[ "$1" =~ ^[0-9]+$ ]]
@@ -63,6 +74,23 @@ normalize_ip_list() {
 
 count_ip_list() {
     awk 'NF { c++ } END { print c + 0 }'
+}
+
+init_runtime_files() {
+    mkdir -p "$DATA_DIR" "${WEB_DIR}/cgi-bin"
+    [ ! -f "${DATA_DIR}/history.json" ] && echo '[]' > "${DATA_DIR}/history.json"
+    [ ! -f "${DATA_DIR}/progress.json" ] && echo '{"active":false,"phase":"idle","percent":0,"message":"等待第一轮测速","updated_at":"--:--:--"}' > "${DATA_DIR}/progress.json"
+    [ ! -f "${DATA_DIR}/status.json" ] && jq -n \
+        --argjson domains "$(printf '%s\n' "${DOMAIN_NAMES[@]}" | jq -R . | jq -s '.')" \
+        --argjson smart_interval $([ "$SMART_INTERVAL" = "true" ] && echo true || echo false) \
+        --argjson canary_mode $([ "$CANARY_MODE" = "true" ] && echo true || echo false) \
+        --argjson ipv4_enabled $([ "$ENABLE_IPV4" = "true" ] && echo true || echo false) \
+        --argjson ipv6_enabled $([ "$ENABLE_IPV6" = "true" ] && echo true || echo false) \
+        --argjson abort_latency "$ABORT_LATENCY" \
+        '{last_update:null,last_ts:null,sleep_seconds:0,domains:$domains,smart_interval:$smart_interval,
+          canary_mode:$canary_mode,abort_latency:$abort_latency,
+          ipv4:{enabled:$ipv4_enabled,top_latency:null,ips:[]},
+          ipv6:{enabled:$ipv6_enabled,top_latency:null,ips:[]}}' > "${DATA_DIR}/status.json"
 }
 
 # =========================================================
@@ -89,6 +117,13 @@ clear_progress() {
     rm -f /tmp/scan_active
 }
 
+cleanup_on_exit() {
+    rm -f /tmp/scan_active /tmp/trigger_scan
+    if [ -d "$DATA_DIR" ]; then
+        report_progress "idle" 0 "服务未在运行，等待容器重启" false
+    fi
+}
+
 # =========================================================
 # 解析多域名配置
 # =========================================================
@@ -109,7 +144,7 @@ parse_domain_config() {
         local D_TOKEN="${!TOKEN_VAR}"
 
         if [ -z "$D_ZONE" ] || [ -z "$D_TOKEN" ]; then
-            echo "⚠️ 域名 #${INDEX} (${D_NAME}) 缺少 ZONE_ID 或 TOKEN，跳过！"
+            log_warn "域名 #${INDEX} (${D_NAME}) 缺少 ZONE_ID 或 TOKEN，跳过"
             continue
         fi
 
@@ -119,8 +154,7 @@ parse_domain_config() {
     done < <(compgen -A variable | grep -E '^DOMAIN_[0-9]+_NAME$' | sort -V)
 
     if [ ${#DOMAIN_NAMES[@]} -eq 0 ]; then
-        echo "❌ 未配置任何域名！"
-        exit 1
+        fail_startup "未配置任何域名"
     fi
 }
 
@@ -181,27 +215,27 @@ validate_runtime_config() {
 
 parse_domain_config
 validate_runtime_config
+trap cleanup_on_exit EXIT
 
 # =========================================================
 # 初始化
 # =========================================================
-mkdir -p "$DATA_DIR" "${WEB_DIR}/cgi-bin"
-[ ! -f "${DATA_DIR}/history.json" ] && echo '[]' > "${DATA_DIR}/history.json"
+init_runtime_files
 clear_progress
 
-echo "========== 极客版 CF-DDNS v7 启动 =========="
-echo "域名数量: ${#DOMAIN_NAMES[@]}"
+log_info "========== 极客版 CF-DDNS v7 启动 =========="
+log_info "域名数量: ${#DOMAIN_NAMES[@]}"
 for i in "${!DOMAIN_NAMES[@]}"; do
-    echo "  [#$((i+1))] ${DOMAIN_NAMES[$i]}"
+    log_info "  [#$((i+1))] ${DOMAIN_NAMES[$i]}"
 done
-echo "Web 面板: http://0.0.0.0:${WEB_PORT}"
-echo "同步策略: 每种记录类型目标保留 ${IP_COUNT} 条；非目标记录会删除；超额记录会自动收敛"
-[ "$CANARY_MODE" = "true" ] && echo "更新模式: 金丝雀，每轮最多替换 ${CANARY_MAX_CHANGES} 条"
-[ "$CANARY_MODE" != "true" ] && echo "更新模式: 全量同步"
+log_info "Web 面板: http://0.0.0.0:${WEB_PORT}"
+log_info "同步策略: 每种记录类型目标保留 ${IP_COUNT} 条；非目标记录会删除；超额记录会自动收敛"
+[ "$CANARY_MODE" = "true" ] && log_info "更新模式: 金丝雀，每轮最多替换 ${CANARY_MAX_CHANGES} 条"
+[ "$CANARY_MODE" != "true" ] && log_info "更新模式: 全量同步"
 
 # 启动 Web 服务器（支持 CGI）
 httpd -p "${WEB_PORT}" -h "${WEB_DIR}"
-echo "✅ Web 面板已启动"
+log_info "Web 面板已启动"
 
 # =========================================================
 # API 调用（带重试）
@@ -230,11 +264,15 @@ cf_api() {
         fi
 
         if [ "$i" -eq "$API_MAX_RETRIES" ]; then
+            local ERRORS
+            ERRORS=$(echo "$RESPONSE" | jq -r '.errors[]?.message' 2>/dev/null | tr '\n' '; ' | sed 's/; $//')
+            [ -z "$ERRORS" ] && ERRORS="未知错误或非 JSON 响应"
+            log_error "Cloudflare API ${METHOD} ${ENDPOINT} 最终失败: ${ERRORS}"
             echo "$RESPONSE"
             return 1
         fi
 
-        echo "  ⚠️ API 失败 (${i}/${API_MAX_RETRIES})，${DELAY}s 后重试..." >&2
+        log_warn "Cloudflare API ${METHOD} ${ENDPOINT} 失败 (${i}/${API_MAX_RETRIES})，${DELAY}s 后重试"
         sleep "$DELAY"
         DELAY=$((DELAY * 2))
     done
@@ -273,7 +311,7 @@ interruptible_sleep() {
     while [ $ELAPSED -lt $TOTAL ]; do
         if [ -f /tmp/trigger_scan ]; then
             rm -f /tmp/trigger_scan
-            echo "[$(date '+%H:%M:%S')] ⚡ 收到手动触发信号！"
+            log_info "收到手动触发信号"
             return 1
         fi
         sleep 3
@@ -355,11 +393,11 @@ update_dns_for_domain() {
     NEW_IPS=$(printf '%s\n' $NEW_IPS | normalize_ip_list)
     local TARGET_COUNT
     TARGET_COUNT=$(printf '%s\n' "$NEW_IPS" | count_ip_list)
-    [ "$TARGET_COUNT" -gt 0 ] || { echo "    ⚠️ [${RECORD_TYPE}] ${DOMAIN} 没有可用目标 IP，跳过更新"; return; }
+    [ "$TARGET_COUNT" -gt 0 ] || { log_warn "[${RECORD_TYPE}] ${DOMAIN} 没有可用目标 IP，跳过更新"; return; }
 
     local API_RESPONSE
     API_RESPONSE=$(cf_api "$TOKEN" GET "/zones/${ZONE_ID}/dns_records?name=${DOMAIN}&type=${RECORD_TYPE}")
-    [ $? -ne 0 ] && { echo "    ❌ [${RECORD_TYPE}] ${DOMAIN} API 查询失败"; return; }
+    [ $? -ne 0 ] && { log_error "[${RECORD_TYPE}] ${DOMAIN} API 查询失败"; return; }
 
     local CURRENT_RECORDS=$(echo "$API_RESPONSE" | jq -r '.result[] | "\(.id)|\(.content)"')
     local -a CURRENT_REC_ARRAY=() IPS_TO_ADD=() RECS_TO_DEL=() OVERFLOW_RECS=()
@@ -409,14 +447,14 @@ update_dns_for_domain() {
     fi
 
     if [ ${#OVERFLOW_RECS[@]} -gt 0 ]; then
-        echo "    ⚠️ [${RECORD_TYPE}] ${DOMAIN} 检测到超额记录 ${#OVERFLOW_RECS[@]} 条，开始收敛"
+        log_warn "[${RECORD_TYPE}] ${DOMAIN} 检测到超额记录 ${#OVERFLOW_RECS[@]} 条，开始收敛"
         RECS_TO_DEL+=("${OVERFLOW_RECS[@]}")
     fi
 
     local TOTAL_ADD=${#IPS_TO_ADD[@]} TOTAL_DEL=${#RECS_TO_DEL[@]}
     local TOTAL_CHANGES=$((TOTAL_ADD + TOTAL_DEL))
-    [ $TOTAL_CHANGES -eq 0 ] && { echo "    [${RECORD_TYPE}] ${DOMAIN} 无变化"; return; }
-    echo "    [${RECORD_TYPE}] ${DOMAIN} 目标 ${TARGET_COUNT} 条，当前 ${CURRENT_COUNT} 条，待新增 ${TOTAL_ADD}，待删除 ${TOTAL_DEL}"
+    [ $TOTAL_CHANGES -eq 0 ] && { log_info "[${RECORD_TYPE}] ${DOMAIN} 无变化"; return; }
+    log_info "[${RECORD_TYPE}] ${DOMAIN} 目标 ${TARGET_COUNT} 条，当前 ${CURRENT_COUNT} 条，待新增 ${TOTAL_ADD}，待删除 ${TOTAL_DEL}"
 
     local ADD_OK=0
     local DEL_OK=0
@@ -436,14 +474,14 @@ update_dns_for_domain() {
 
             if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
                 "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
-                echo "    🎉 [${RECORD_TYPE}] ${DOMAIN} +${IP}"
+                log_info "[${RECORD_TYPE}] ${DOMAIN} +${IP}"
                 if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
-                    echo "    🗑️ [${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
+                    log_info "[${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
                     ADD_OK=$((ADD_OK + 1))
                     DEL_OK=$((DEL_OK + 1))
                     SLOTS=$((SLOTS - 1))
                 else
-                    echo "    ⚠️ [${RECORD_TYPE}] ${DOMAIN} 删除旧记录失败，保留新增的 ${IP}"
+                    log_warn "[${RECORD_TYPE}] ${DOMAIN} 删除旧记录失败，保留新增的 ${IP}"
                 fi
             fi
         done
@@ -455,7 +493,7 @@ update_dns_for_domain() {
             local IP="${IPS_TO_ADD[$idx]}"
             if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
                 "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
-                echo "    🎉 [${RECORD_TYPE}] ${DOMAIN} +${IP}"
+                log_info "[${RECORD_TYPE}] ${DOMAIN} +${IP}"
                 ADD_OK=$((ADD_OK + 1))
                 SLOTS=$((SLOTS - 1))
             fi
@@ -469,7 +507,7 @@ update_dns_for_domain() {
             local C_ID="${REC%|*}"
             local C_IP="${REC#*|}"
             if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
-                echo "    🗑️ [${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
+                log_info "[${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
                 DEL_OK=$((DEL_OK + 1))
                 SLOTS=$((SLOTS - 1))
             fi
@@ -479,7 +517,7 @@ update_dns_for_domain() {
             local IP="${IPS_TO_ADD[$idx]}"
             if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
                 "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
-                echo "    🎉 [${RECORD_TYPE}] ${DOMAIN} +${IP}"
+                log_info "[${RECORD_TYPE}] ${DOMAIN} +${IP}"
                 ADD_OK=$((ADD_OK + 1))
             fi
         done
@@ -489,7 +527,7 @@ update_dns_for_domain() {
             local C_ID="${REC%|*}"
             local C_IP="${REC#*|}"
             if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
-                echo "    🗑️ [${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
+                log_info "[${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
                 DEL_OK=$((DEL_OK + 1))
             fi
         done
@@ -514,23 +552,26 @@ run_speedtest() {
     [ "$TYPE" = "IPv6" ] && { CFST_ARGS+=(-ipv6); REC_TYPE="AAAA"; }
 
     report_progress "speedtest_${TYPE}" "$BASE_PCT" "正在测速 ${TYPE}..."
-    echo "[$(date '+%H:%M:%S')] 开始测速: ${TYPE} ..."
-    /app/cfst "${CFST_ARGS[@]}" > /dev/null 2>&1
+    log_info "开始测速: ${TYPE}"
+    if ! /app/cfst "${CFST_ARGS[@]}" > /dev/null 2>&1; then
+        log_warn "${TYPE} 测速程序退出异常，保留上次有效结果"
+    fi
 
-    [ ! -f "$TMP_FILE" ] && { echo "  ⚠️ ${TYPE} 结果文件不存在"; return; }
+    [ ! -f "$TMP_FILE" ] && { log_warn "${TYPE} 结果文件不存在，保留上次有效结果"; return; }
 
     local TOP_LATENCY=$(awk -F, 'NR==2{print $5}' "$TMP_FILE" | tr -d ' \r\n')
     if [ -z "$TOP_LATENCY" ] || [ "$TOP_LATENCY" = "0.00" ]; then
-        echo "  ⚠️ ${TYPE} 测速失败或无达标IP，保留上次有效结果"
+        log_warn "${TYPE} 测速失败或无达标 IP，保留上次有效结果"
+        rm -f "$TMP_FILE"
         return
     fi
 
-    # 🚨 核心修复点：只有测速成功了，才覆盖掉正式的结果文件！
     mv -f "$TMP_FILE" "$RESULT_FILE"
+    ROUND_HAS_VALID_RESULT=1
 
     local IS_MELT=$(awk -v l="$TOP_LATENCY" -v a="$ABORT_LATENCY" 'BEGIN{print(l>a?1:0)}')
     if [ "$IS_MELT" -eq 1 ]; then
-        echo "  🚨 熔断！${TOP_LATENCY}ms > ${ABORT_LATENCY}ms"
+        log_warn "${TYPE} 熔断: ${TOP_LATENCY}ms > ${ABORT_LATENCY}ms"
         report_progress "meltdown" "$((BASE_PCT + SPAN_PCT))" "熔断保护：延迟 ${TOP_LATENCY}ms 超标"
         return
     fi
@@ -539,15 +580,15 @@ run_speedtest() {
     BEST_IPS=$(printf '%s\n' $BEST_IPS | normalize_ip_list)
     local BEST_COUNT
     BEST_COUNT=$(printf '%s\n' "$BEST_IPS" | count_ip_list)
-    [ "$BEST_COUNT" -gt 0 ] || { echo "  ⚠️ ${TYPE} 没有可用目标 IP，跳过 DNS 更新"; return; }
-    echo "  ✅ 测速达标 (Top1: ${TOP_LATENCY}ms)"
-    echo "  🎯 ${TYPE} 本轮目标记录数: ${BEST_COUNT}"
+    [ "$BEST_COUNT" -gt 0 ] || { log_warn "${TYPE} 没有可用目标 IP，跳过 DNS 更新"; return; }
+    log_info "${TYPE} 测速达标 (Top1: ${TOP_LATENCY}ms)"
+    log_info "${TYPE} 本轮目标记录数: ${BEST_COUNT}"
 
     local DOMAIN_COUNT=${#DOMAIN_NAMES[@]}
     for i in "${!DOMAIN_NAMES[@]}"; do
         local D_PCT=$((BASE_PCT + SPAN_PCT * (i + 1) / (DOMAIN_COUNT + 1)))
         report_progress "dns_update" "$D_PCT" "更新 ${DOMAIN_NAMES[$i]} 的 ${REC_TYPE} 记录..."
-        echo "  → [#$((i+1))] ${DOMAIN_NAMES[$i]}"
+        log_info "更新 [${REC_TYPE}] [#$((i+1))] ${DOMAIN_NAMES[$i]}"
         update_dns_for_domain "$REC_TYPE" "$BEST_IPS" "${DOMAIN_NAMES[$i]}" "${DOMAIN_ZONES[$i]}" "${DOMAIN_TOKENS[$i]}"
     done
 }
@@ -556,11 +597,12 @@ run_speedtest() {
 # 主循环
 # =========================================================
 while true; do
-    echo "================================================="
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 新一轮测速任务"
+    log_info "================================================="
+    log_info "新一轮测速任务"
 
     touch /tmp/scan_active
     ROUND_HAS_CHANGES=0
+    ROUND_HAS_VALID_RESULT=0
     report_progress "starting" 2 "正在启动测速任务..."
 
     if [ "$ENABLE_IPV4" = "true" ] && [ "$ENABLE_IPV6" = "true" ]; then
@@ -576,6 +618,8 @@ while true; do
     date +%s > /tmp/last_run
     SLEEP_TIME=$(get_smart_sleep)
     persist_results "$SLEEP_TIME"
+    [ "$ROUND_HAS_VALID_RESULT" -eq 1 ] && log_info "本轮至少生成了 1 份有效测速结果"
+    [ "$ROUND_HAS_VALID_RESULT" -eq 0 ] && log_warn "本轮没有新的有效测速结果，状态页继续显示历史有效结果"
 
     report_progress "done" 100 "本轮完成"
     sleep 2
@@ -583,11 +627,11 @@ while true; do
 
     if [ "$SMART_INTERVAL" = "true" ]; then
         STABLE_NOW=$(cat "$STABLE_COUNT_FILE" 2>/dev/null || echo 0)
-        [ "$ROUND_HAS_CHANGES" -eq 1 ] && echo "[$(date '+%H:%M:%S')] 📊 智能调度：有变更，重置为 ${SLEEP_TIME}s"
-        [ "$SLEEP_TIME" -gt "$INTERVAL" ] && echo "[$(date '+%H:%M:%S')] 📊 智能调度：连续 ${STABLE_NOW} 轮稳定，升至 ${SLEEP_TIME}s"
+        [ "$ROUND_HAS_CHANGES" -eq 1 ] && log_info "智能调度: 有变更，重置为 ${SLEEP_TIME}s"
+        [ "$SLEEP_TIME" -gt "$INTERVAL" ] && log_info "智能调度: 连续 ${STABLE_NOW} 轮稳定，升至 ${SLEEP_TIME}s"
     fi
 
-    echo "[$(date '+%H:%M:%S')] 休眠 ${SLEEP_TIME} 秒..."
+    log_info "休眠 ${SLEEP_TIME} 秒"
     REMAIN_MIN=$((SLEEP_TIME / 60))
     report_progress "sleeping" 0 "休眠中，约 ${REMAIN_MIN} 分钟后下一轮" false
 
