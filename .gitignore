@@ -1,0 +1,7 @@
+.env
+data/
+cfst_linux_*.tar.gz
+cfst
+result_*.csv
+.DS_Store
+Thumbs.db
