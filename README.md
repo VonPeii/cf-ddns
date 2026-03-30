@@ -43,6 +43,9 @@ cd cf-ddns
 
 ### 2. 下载测速工具
 
+当前仓库内置的 Dockerfile 默认按 `ARM64` 环境构建，适合软路由、树莓派、ARM 小主机。
+如果你运行在 `x86_64/amd64` 机器上，不能直接使用仓库当前默认文件，需要同步调整测速二进制包名和 Dockerfile。
+
 从 [XIU2/CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest/releases) 下载对应架构的版本，放到项目根目录。
 
 ```bash
@@ -111,7 +114,7 @@ docker compose up -d --build
 | `ENABLE_IPV4` | `true` | 启用 IPv4 测速 |
 | `ENABLE_IPV6` | `true` | 启用 IPv6 测速 |
 | `ABORT_LATENCY` | `300` | 熔断阈值（ms） |
-| `CANARY_MODE` | `false` | 金丝雀渐进更新 |
+| `CANARY_MODE` | `true` | 金丝雀渐进更新 |
 | `CANARY_MAX_CHANGES` | `1` | 每轮最大变更数 |
 | `API_MAX_RETRIES` | `3` | API 失败重试次数 |
 | `API_BASE_DELAY` | `5` | 重试基础等待（秒） |
@@ -128,6 +131,8 @@ docker compose up -d --build
 | `DOMAIN_N_NAME` | 第 N 个域名 |
 | `DOMAIN_N_ZONE_ID` | 第 N 个域名的 Zone ID |
 | `DOMAIN_N_TOKEN` | 第 N 个域名的 API Token |
+
+域名编号允许不连续，例如只配置 `DOMAIN_1_*` 和 `DOMAIN_3_*` 也能被正确加载。
 
 ---
 
@@ -162,7 +167,9 @@ cf-ddns/
 ├── update.sh           # 核心逻辑
 ├── healthcheck.sh      # 健康检查
 └── web/
-    └── index.html      # 状态面板
+    ├── index.html      # 状态面板
+    └── cgi-bin/
+        └── trigger.sh  # 手动触发接口
 ```
 
 ---

@@ -65,29 +65,26 @@ DOMAIN_ZONES=()
 DOMAIN_TOKENS=()
 
 parse_domain_config() {
-    local i=1
-    while true; do
-        local NAME_VAR="DOMAIN_${i}_NAME"
-        local ZONE_VAR="DOMAIN_${i}_ZONE_ID"
-        local TOKEN_VAR="DOMAIN_${i}_TOKEN"
+    local NAME_VAR
+    while IFS= read -r NAME_VAR; do
+        local INDEX="${NAME_VAR#DOMAIN_}"
+        INDEX="${INDEX%_NAME}"
+        local ZONE_VAR="DOMAIN_${INDEX}_ZONE_ID"
+        local TOKEN_VAR="DOMAIN_${INDEX}_TOKEN"
 
         local D_NAME="${!NAME_VAR}"
         local D_ZONE="${!ZONE_VAR}"
         local D_TOKEN="${!TOKEN_VAR}"
 
-        [ -z "$D_NAME" ] && break
-
         if [ -z "$D_ZONE" ] || [ -z "$D_TOKEN" ]; then
-            echo "⚠️ 域名 #${i} (${D_NAME}) 缺少 ZONE_ID 或 TOKEN，跳过！"
-            i=$((i + 1))
+            echo "⚠️ 域名 #${INDEX} (${D_NAME}) 缺少 ZONE_ID 或 TOKEN，跳过！"
             continue
         fi
 
         DOMAIN_NAMES+=("$D_NAME")
         DOMAIN_ZONES+=("$D_ZONE")
         DOMAIN_TOKENS+=("$D_TOKEN")
-        i=$((i + 1))
-    done
+    done < <(compgen -A variable | grep -E '^DOMAIN_[0-9]+_NAME$' | sort -V)
 
     if [ ${#DOMAIN_NAMES[@]} -eq 0 ]; then
         echo "❌ 未配置任何域名！"
@@ -287,33 +284,82 @@ update_dns_for_domain() {
     local TOTAL_CHANGES=$((TOTAL_ADD + TOTAL_DEL))
     [ $TOTAL_CHANGES -eq 0 ] && { echo "    [${RECORD_TYPE}] ${DOMAIN} 无变化"; return; }
 
-    local APPLY_ADD=$TOTAL_ADD APPLY_DEL=$TOTAL_DEL IS_CANARY=0
-    if [ "$CANARY_MODE" = "true" ]; then
-        local REMAIN=$CANARY_MAX_CHANGES
-        [ $APPLY_ADD -gt $REMAIN ] && APPLY_ADD=$REMAIN
-        REMAIN=$((REMAIN - APPLY_ADD)); [ $REMAIN -lt 0 ] && REMAIN=0
-        [ $APPLY_DEL -gt $REMAIN ] && APPLY_DEL=$REMAIN
-        [ $((APPLY_ADD + APPLY_DEL)) -lt $TOTAL_CHANGES ] && IS_CANARY=1
-    fi
-
     local ADD_OK=0
-    for idx in $(seq 0 $((APPLY_ADD - 1))); do
-        local IP="${IPS_TO_ADD[$idx]}"
-        if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
-            "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
-            echo "    🎉 [${RECORD_TYPE}] ${DOMAIN} +${IP}"
-            ADD_OK=$((ADD_OK + 1))
-        fi
-    done
-
     local DEL_OK=0
-    for idx in $(seq 0 $((APPLY_DEL - 1))); do
-        local REC="${RECS_TO_DEL[$idx]}" C_ID="${REC%|*}" C_IP="${REC#*|}"
-        if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
-            echo "    🗑️ [${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
-            DEL_OK=$((DEL_OK + 1))
-        fi
-    done
+
+    if [ "$CANARY_MODE" = "true" ]; then
+        local REPLACEMENTS=$TOTAL_ADD
+        [ $TOTAL_DEL -lt $REPLACEMENTS ] && REPLACEMENTS=$TOTAL_DEL
+        local SLOTS=$CANARY_MAX_CHANGES
+
+        for idx in $(seq 0 $((REPLACEMENTS - 1))); do
+            [ "$SLOTS" -le 0 ] && break
+
+            local IP="${IPS_TO_ADD[$idx]}"
+            local REC="${RECS_TO_DEL[$idx]}"
+            local C_ID="${REC%|*}"
+            local C_IP="${REC#*|}"
+
+            if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
+                "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
+                echo "    🎉 [${RECORD_TYPE}] ${DOMAIN} +${IP}"
+                if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
+                    echo "    🗑️ [${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
+                    ADD_OK=$((ADD_OK + 1))
+                    DEL_OK=$((DEL_OK + 1))
+                    SLOTS=$((SLOTS - 1))
+                else
+                    echo "    ⚠️ [${RECORD_TYPE}] ${DOMAIN} 删除旧记录失败，保留新增的 ${IP}"
+                fi
+            fi
+        done
+
+        local ADD_START=$REPLACEMENTS
+        for idx in $(seq "$ADD_START" $((TOTAL_ADD - 1))); do
+            [ "$SLOTS" -le 0 ] && break
+
+            local IP="${IPS_TO_ADD[$idx]}"
+            if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
+                "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
+                echo "    🎉 [${RECORD_TYPE}] ${DOMAIN} +${IP}"
+                ADD_OK=$((ADD_OK + 1))
+                SLOTS=$((SLOTS - 1))
+            fi
+        done
+
+        local DEL_START=$REPLACEMENTS
+        for idx in $(seq "$DEL_START" $((TOTAL_DEL - 1))); do
+            [ "$SLOTS" -le 0 ] && break
+
+            local REC="${RECS_TO_DEL[$idx]}"
+            local C_ID="${REC%|*}"
+            local C_IP="${REC#*|}"
+            if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
+                echo "    🗑️ [${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
+                DEL_OK=$((DEL_OK + 1))
+                SLOTS=$((SLOTS - 1))
+            fi
+        done
+    else
+        for idx in $(seq 0 $((TOTAL_ADD - 1))); do
+            local IP="${IPS_TO_ADD[$idx]}"
+            if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
+                "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
+                echo "    🎉 [${RECORD_TYPE}] ${DOMAIN} +${IP}"
+                ADD_OK=$((ADD_OK + 1))
+            fi
+        done
+
+        for idx in $(seq 0 $((TOTAL_DEL - 1))); do
+            local REC="${RECS_TO_DEL[$idx]}"
+            local C_ID="${REC%|*}"
+            local C_IP="${REC#*|}"
+            if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
+                echo "    🗑️ [${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
+                DEL_OK=$((DEL_OK + 1))
+            fi
+        done
+    fi
 
     [ $ADD_OK -gt 0 ] || [ $DEL_OK -gt 0 ] && ROUND_HAS_CHANGES=1
 }
@@ -403,7 +449,7 @@ while true; do
     fi
 
     echo "[$(date '+%H:%M:%S')] 休眠 ${SLEEP_TIME} 秒..."
-    local REMAIN_MIN=$((SLEEP_TIME / 60))
+    REMAIN_MIN=$((SLEEP_TIME / 60))
     report_progress "sleeping" 0 "休眠中，约 ${REMAIN_MIN} 分钟后下一轮" false
 
     interruptible_sleep "$SLEEP_TIME"
