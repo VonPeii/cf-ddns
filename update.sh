@@ -266,19 +266,58 @@ update_dns_for_domain() {
     [ $? -ne 0 ] && { echo "    ❌ [${RECORD_TYPE}] ${DOMAIN} API 查询失败"; return; }
 
     local CURRENT_RECORDS=$(echo "$API_RESPONSE" | jq -r '.result[] | "\(.id)|\(.content)"')
-    local -a IPS_TO_ADD=() RECS_TO_DEL=()
+    local -a CURRENT_REC_ARRAY=() IPS_TO_ADD=() RECS_TO_DEL=() OVERFLOW_RECS=()
+
+    while IFS= read -r C_REC; do
+        [ -n "$C_REC" ] && CURRENT_REC_ARRAY+=("$C_REC")
+    done <<< "$CURRENT_RECORDS"
 
     for N_IP in $NEW_IPS; do
         local MATCH=0
-        for C_REC in $CURRENT_RECORDS; do [ "$N_IP" = "${C_REC#*|}" ] && MATCH=1 && break; done
+        for C_REC in "${CURRENT_REC_ARRAY[@]}"; do [ "$N_IP" = "${C_REC#*|}" ] && MATCH=1 && break; done
         [ $MATCH -eq 0 ] && IPS_TO_ADD+=("$N_IP")
     done
 
-    for C_REC in $CURRENT_RECORDS; do
+    for C_REC in "${CURRENT_REC_ARRAY[@]}"; do
         local C_IP="${C_REC#*|}" MATCH=0
         for N_IP in $NEW_IPS; do [ "$C_IP" = "$N_IP" ] && MATCH=1 && break; done
         [ $MATCH -eq 0 ] && RECS_TO_DEL+=("$C_REC")
     done
+
+    local TARGET_COUNT
+    TARGET_COUNT=$(printf '%s\n' $NEW_IPS | sed '/^$/d' | wc -l)
+    local CURRENT_COUNT=${#CURRENT_REC_ARRAY[@]}
+    local EXCESS=$((CURRENT_COUNT - TARGET_COUNT))
+    if [ "$EXCESS" -gt 0 ]; then
+        for C_REC in "${CURRENT_REC_ARRAY[@]}"; do
+            [ "$EXCESS" -le 0 ] && break
+
+            local C_IP="${C_REC#*|}"
+            local KEEP=0
+            for N_IP in $NEW_IPS; do
+                if [ "$C_IP" = "$N_IP" ]; then
+                    KEEP=1
+                    break
+                fi
+            done
+
+            [ "$KEEP" -eq 0 ] && continue
+
+            local ALREADY_DEL=0
+            for D_REC in "${RECS_TO_DEL[@]}"; do
+                [ "$C_REC" = "$D_REC" ] && ALREADY_DEL=1 && break
+            done
+            [ "$ALREADY_DEL" -eq 1 ] && continue
+
+            OVERFLOW_RECS+=("$C_REC")
+            EXCESS=$((EXCESS - 1))
+        done
+    fi
+
+    if [ ${#OVERFLOW_RECS[@]} -gt 0 ]; then
+        echo "    ⚠️ [${RECORD_TYPE}] ${DOMAIN} 检测到超额记录 ${#OVERFLOW_RECS[@]} 条，开始收敛"
+        RECS_TO_DEL+=("${OVERFLOW_RECS[@]}")
+    fi
 
     local TOTAL_ADD=${#IPS_TO_ADD[@]} TOTAL_DEL=${#RECS_TO_DEL[@]}
     local TOTAL_CHANGES=$((TOTAL_ADD + TOTAL_DEL))
