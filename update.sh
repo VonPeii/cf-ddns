@@ -34,6 +34,38 @@ HISTORY_MAX=${HISTORY_MAX:-200}
 ROUND_HAS_CHANGES=0
 
 # =========================================================
+# 校验工具
+# =========================================================
+fail_startup() {
+    echo "❌ $1" >&2
+    exit 1
+}
+
+is_uint() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+is_positive_int() {
+    is_uint "$1" && [ "$1" -gt 0 ]
+}
+
+is_bool() {
+    [ "$1" = "true" ] || [ "$1" = "false" ]
+}
+
+check_required_command() {
+    command -v "$1" > /dev/null 2>&1 || fail_startup "缺少依赖命令: $1"
+}
+
+normalize_ip_list() {
+    awk 'NF && !seen[$0]++ { print $0 }'
+}
+
+count_ip_list() {
+    awk 'NF { c++ } END { print c + 0 }'
+}
+
+# =========================================================
 # 进度上报
 # =========================================================
 report_progress() {
@@ -92,7 +124,63 @@ parse_domain_config() {
     fi
 }
 
+# =========================================================
+# 启动校验
+# =========================================================
+validate_runtime_config() {
+    check_required_command curl
+    check_required_command jq
+    check_required_command awk
+    check_required_command sed
+    check_required_command grep
+    check_required_command sort
+    check_required_command wc
+    check_required_command httpd
+    check_required_command seq
+
+    [ -x /app/cfst ] || fail_startup "测速程序 /app/cfst 不存在或不可执行"
+
+    is_positive_int "$INTERVAL" || fail_startup "INTERVAL 必须是正整数，当前值: $INTERVAL"
+    is_positive_int "$CFST_TL" || fail_startup "CFST_TL 必须是正整数，当前值: $CFST_TL"
+    is_positive_int "$CFST_SL" || fail_startup "CFST_SL 必须是正整数，当前值: $CFST_SL"
+    is_positive_int "$IP_COUNT" || fail_startup "IP_COUNT 必须是正整数，当前值: $IP_COUNT"
+    is_positive_int "$ABORT_LATENCY" || fail_startup "ABORT_LATENCY 必须是正整数，当前值: $ABORT_LATENCY"
+    is_positive_int "$CANARY_MAX_CHANGES" || fail_startup "CANARY_MAX_CHANGES 必须是正整数，当前值: $CANARY_MAX_CHANGES"
+    is_positive_int "$API_MAX_RETRIES" || fail_startup "API_MAX_RETRIES 必须是正整数，当前值: $API_MAX_RETRIES"
+    is_positive_int "$API_BASE_DELAY" || fail_startup "API_BASE_DELAY 必须是正整数，当前值: $API_BASE_DELAY"
+    is_positive_int "$SMART_STABLE_THRESHOLD" || fail_startup "SMART_STABLE_THRESHOLD 必须是正整数，当前值: $SMART_STABLE_THRESHOLD"
+    is_positive_int "$MAX_INTERVAL" || fail_startup "MAX_INTERVAL 必须是正整数，当前值: $MAX_INTERVAL"
+    is_positive_int "$HISTORY_MAX" || fail_startup "HISTORY_MAX 必须是正整数，当前值: $HISTORY_MAX"
+    is_positive_int "$WEB_PORT" || fail_startup "WEB_PORT 必须是正整数，当前值: $WEB_PORT"
+    [ "$WEB_PORT" -le 65535 ] || fail_startup "WEB_PORT 超出有效范围，当前值: $WEB_PORT"
+
+    is_bool "$ENABLE_IPV4" || fail_startup "ENABLE_IPV4 只能是 true 或 false，当前值: $ENABLE_IPV4"
+    is_bool "$ENABLE_IPV6" || fail_startup "ENABLE_IPV6 只能是 true 或 false，当前值: $ENABLE_IPV6"
+    is_bool "$CANARY_MODE" || fail_startup "CANARY_MODE 只能是 true 或 false，当前值: $CANARY_MODE"
+    is_bool "$SMART_INTERVAL" || fail_startup "SMART_INTERVAL 只能是 true 或 false，当前值: $SMART_INTERVAL"
+
+    [ "$ENABLE_IPV4" = "true" ] || [ "$ENABLE_IPV6" = "true" ] || fail_startup "ENABLE_IPV4 和 ENABLE_IPV6 不能同时为 false"
+    [ "$MAX_INTERVAL" -ge "$INTERVAL" ] || fail_startup "MAX_INTERVAL 不能小于 INTERVAL"
+    [ "$ABORT_LATENCY" -ge "$CFST_TL" ] || fail_startup "ABORT_LATENCY 不能小于 CFST_TL，否则达标结果会被熔断"
+    [ -n "$CFST_URL" ] || fail_startup "CFST_URL 不能为空"
+
+    local i
+    for i in "${!DOMAIN_NAMES[@]}"; do
+        local D_NAME="${DOMAIN_NAMES[$i]}"
+        local D_ZONE="${DOMAIN_ZONES[$i]}"
+        local D_TOKEN="${DOMAIN_TOKENS[$i]}"
+
+        [ -n "$D_NAME" ] || fail_startup "存在空的 DOMAIN_N_NAME"
+        [ -n "$D_ZONE" ] || fail_startup "域名 ${D_NAME} 缺少 ZONE_ID"
+        [ -n "$D_TOKEN" ] || fail_startup "域名 ${D_NAME} 缺少 TOKEN"
+        [[ "$D_NAME" != *" "* ]] || fail_startup "域名 ${D_NAME} 含有空格"
+        [[ "$D_ZONE" != "your_zone_id_here" ]] || fail_startup "域名 ${D_NAME} 的 ZONE_ID 仍是示例值"
+        [[ "$D_TOKEN" != "your_api_token_here" ]] || fail_startup "域名 ${D_NAME} 的 TOKEN 仍是示例值"
+    done
+}
+
 parse_domain_config
+validate_runtime_config
 
 # =========================================================
 # 初始化
@@ -107,6 +195,9 @@ for i in "${!DOMAIN_NAMES[@]}"; do
     echo "  [#$((i+1))] ${DOMAIN_NAMES[$i]}"
 done
 echo "Web 面板: http://0.0.0.0:${WEB_PORT}"
+echo "同步策略: 每种记录类型目标保留 ${IP_COUNT} 条；非目标记录会删除；超额记录会自动收敛"
+[ "$CANARY_MODE" = "true" ] && echo "更新模式: 金丝雀，每轮最多替换 ${CANARY_MAX_CHANGES} 条"
+[ "$CANARY_MODE" != "true" ] && echo "更新模式: 全量同步"
 
 # 启动 Web 服务器（支持 CGI）
 httpd -p "${WEB_PORT}" -h "${WEB_DIR}"
@@ -261,6 +352,11 @@ persist_results() {
 update_dns_for_domain() {
     local RECORD_TYPE=$1 NEW_IPS=$2 DOMAIN=$3 ZONE_ID=$4 TOKEN=$5
 
+    NEW_IPS=$(printf '%s\n' $NEW_IPS | normalize_ip_list)
+    local TARGET_COUNT
+    TARGET_COUNT=$(printf '%s\n' "$NEW_IPS" | count_ip_list)
+    [ "$TARGET_COUNT" -gt 0 ] || { echo "    ⚠️ [${RECORD_TYPE}] ${DOMAIN} 没有可用目标 IP，跳过更新"; return; }
+
     local API_RESPONSE
     API_RESPONSE=$(cf_api "$TOKEN" GET "/zones/${ZONE_ID}/dns_records?name=${DOMAIN}&type=${RECORD_TYPE}")
     [ $? -ne 0 ] && { echo "    ❌ [${RECORD_TYPE}] ${DOMAIN} API 查询失败"; return; }
@@ -284,8 +380,6 @@ update_dns_for_domain() {
         [ $MATCH -eq 0 ] && RECS_TO_DEL+=("$C_REC")
     done
 
-    local TARGET_COUNT
-    TARGET_COUNT=$(printf '%s\n' $NEW_IPS | sed '/^$/d' | wc -l)
     local CURRENT_COUNT=${#CURRENT_REC_ARRAY[@]}
     local EXCESS=$((CURRENT_COUNT - TARGET_COUNT))
     if [ "$EXCESS" -gt 0 ]; then
@@ -322,6 +416,7 @@ update_dns_for_domain() {
     local TOTAL_ADD=${#IPS_TO_ADD[@]} TOTAL_DEL=${#RECS_TO_DEL[@]}
     local TOTAL_CHANGES=$((TOTAL_ADD + TOTAL_DEL))
     [ $TOTAL_CHANGES -eq 0 ] && { echo "    [${RECORD_TYPE}] ${DOMAIN} 无变化"; return; }
+    echo "    [${RECORD_TYPE}] ${DOMAIN} 目标 ${TARGET_COUNT} 条，当前 ${CURRENT_COUNT} 条，待新增 ${TOTAL_ADD}，待删除 ${TOTAL_DEL}"
 
     local ADD_OK=0
     local DEL_OK=0
@@ -441,7 +536,12 @@ run_speedtest() {
     fi
 
     local BEST_IPS=$(awk -F, 'NR>1 && $5>0{print $1}' "$RESULT_FILE" | head -n ${IP_COUNT} | tr -d ' \r')
+    BEST_IPS=$(printf '%s\n' $BEST_IPS | normalize_ip_list)
+    local BEST_COUNT
+    BEST_COUNT=$(printf '%s\n' "$BEST_IPS" | count_ip_list)
+    [ "$BEST_COUNT" -gt 0 ] || { echo "  ⚠️ ${TYPE} 没有可用目标 IP，跳过 DNS 更新"; return; }
     echo "  ✅ 测速达标 (Top1: ${TOP_LATENCY}ms)"
+    echo "  🎯 ${TYPE} 本轮目标记录数: ${BEST_COUNT}"
 
     local DOMAIN_COUNT=${#DOMAIN_NAMES[@]}
     for i in "${!DOMAIN_NAMES[@]}"; do

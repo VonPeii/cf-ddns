@@ -134,6 +134,29 @@ docker compose up -d --build
 
 域名编号允许不连续，例如只配置 `DOMAIN_1_*` 和 `DOMAIN_3_*` 也能被正确加载。
 
+### 启动前校验
+
+容器启动时会先校验运行环境和配置。以下情况会直接报错退出，而不是带着错误配置继续运行：
+
+- 缺少 `curl`、`jq`、`httpd`、`awk` 等依赖命令
+- `/app/cfst` 不存在或不可执行
+- `INTERVAL`、`IP_COUNT`、`WEB_PORT`、`CANARY_MAX_CHANGES` 等数值配置不是正整数
+- `ENABLE_IPV4`、`ENABLE_IPV6`、`CANARY_MODE`、`SMART_INTERVAL` 不是 `true/false`
+- `ENABLE_IPV4` 和 `ENABLE_IPV6` 同时为 `false`
+- `MAX_INTERVAL < INTERVAL`
+- `ABORT_LATENCY < CFST_TL`
+- 域名配置为空，或仍然使用 `.env.example` 里的示例值
+
+### DNS 同步策略
+
+每一轮测速完成后，脚本会把 Cloudflare 记录收敛到“本轮目标状态”：
+
+- 每种记录类型的目标数量等于本轮有效候选 IP 数，正常情况下就是 `IP_COUNT`
+- 候选 IP 会先去重，再参与同步
+- 不在目标集合中的旧记录会删除
+- 如果 Cloudflare 上已有记录数量超过目标数量，多出来的记录会自动逐轮收敛
+- `CANARY_MODE=true` 时，每轮按“替换记录”推进；`CANARY_MAX_CHANGES=1` 表示每轮最多替换 1 条，而不是只做 1 次 API 调用
+
 ---
 
 ## 日常操作
