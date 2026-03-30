@@ -620,12 +620,23 @@ function phaseLabel(phase) {
 
 /* ======= 工具函数 ======= */
 function fmtCountdown(sec) {
-  if (!sec || sec <= 0) return '即将开始';
+  if (sec == null || Number.isNaN(sec)) return '等待首轮完成';
+  if (sec <= 0) return '即将开始';
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   if (h > 0) return h + ' 小时 ' + m + ' 分钟';
   if (m > 0) return m + ' 分钟';
   return '不到 1 分钟';
+}
+
+function statusMetaLine(status) {
+  if (!status.last_update || !status.last_ts) {
+    return '服务已启动 · 等待第一轮有效测速结果';
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const nextSec = (status.last_ts + status.sleep_seconds) - now;
+  return `上次 ${status.last_update}　·　下次约 ${fmtCountdown(nextSec)}`;
 }
 
 function latClass(val, abort) {
@@ -638,7 +649,7 @@ function latClass(val, abort) {
 /* ======= 渲染卡片 ======= */
 function renderCards(st) {
   const now = Math.floor(Date.now() / 1000);
-  const nextSec = (st.last_ts + st.sleep_seconds) - now;
+  const nextSec = st.last_ts ? (st.last_ts + st.sleep_seconds) - now : null;
   const v4L = st.ipv4.enabled ? st.ipv4.top_latency : null;
   const v6L = st.ipv6.enabled ? st.ipv6.top_latency : null;
   const v4N = st.ipv4.enabled ? st.ipv4.ips.length : 0;
@@ -663,7 +674,7 @@ function renderCards(st) {
     <div class="card">
       <div class="label">下次更新</div>
       <div class="value" style="font-size:18px;color:var(--primary-dark)">${fmtCountdown(nextSec)}</div>
-      <div class="sub">间隔 ${Math.round(st.sleep_seconds/60)} 分钟</div>
+      <div class="sub">${st.last_ts ? `间隔 ${Math.round(st.sleep_seconds/60)} 分钟` : '等待首轮有效结果后开始调度'}</div>
     </div>
     <div class="card">
       <div class="label">运行模式</div>
@@ -683,7 +694,7 @@ function renderDomains(st) {
     <div class="domain-card">
       <h3>${d}</h3>
       <span class="zone-tag">Zone #${idx + 1}</span>
-      <div>${tags || '<span style="color:var(--text-muted);font-size:12px">暂无记录</span>'}</div>
+      <div>${tags || '<span style="color:var(--text-muted);font-size:12px">等待首轮有效结果</span>'}</div>
     </div>`).join('');
 }
 
@@ -818,9 +829,7 @@ async function render() {
       fetchJSON('/history.json')
     ]);
 
-    const now = Math.floor(Date.now() / 1000);
-    const nextSec = (status.last_ts + status.sleep_seconds) - now;
-    $('#metaLine').innerHTML = `上次 ${status.last_update || '--'}　·　下次约 ${fmtCountdown(nextSec)}`;
+    $('#metaLine').textContent = statusMetaLine(status);
 
     $('#content').innerHTML = `
       <div class="cards">${renderCards(status)}</div>
@@ -847,6 +856,7 @@ async function render() {
     drawChart('chart', history, chartTab);
     window._history = history;
   } catch (e) {
+    $('#metaLine').textContent = '状态读取失败，请稍后刷新';
     console.error(e);
   }
 }
