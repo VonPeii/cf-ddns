@@ -313,6 +313,38 @@
     padding: 2px 8px;
     margin-bottom: 10px;
   }
+  .status-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: var(--radius-pill);
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--petal);
+    color: var(--text-sub);
+    border: 1px solid var(--petal-border);
+  }
+  .status-chip.synced { color: var(--success); border-color: rgba(126,191,142,0.35); }
+  .status-chip.partial { color: var(--warning); border-color: rgba(226,184,102,0.35); }
+  .status-chip.error, .status-chip.drifted { color: var(--danger); border-color: rgba(212,115,110,0.35); }
+  .status-chip.skipped, .status-chip.unknown { color: var(--text-muted); }
+  .domain-note {
+    font-size: 12px;
+    color: var(--text-sub);
+    margin-bottom: 8px;
+  }
+  .domain-error {
+    font-size: 12px;
+    color: var(--danger);
+    margin-top: 8px;
+  }
   .ip-tag {
     display: inline-block;
     background: var(--petal);
@@ -523,6 +555,7 @@
 <script>
 const $ = s => document.querySelector(s);
 let chartTab = 'latency';
+let triggerToken = null;
 
 /* ======= Toast 通知 ======= */
 function showToast(msg, duration = 3000) {
@@ -544,13 +577,24 @@ async function fetchJSON(path) {
   return r.json();
 }
 
+async function ensureTriggerToken() {
+  if (triggerToken) return triggerToken;
+  const ui = await fetchJSON('/ui.json');
+  triggerToken = ui.trigger_token || null;
+  return triggerToken;
+}
+
 /* ======= 手动触发 ======= */
 async function triggerScan() {
   const btn = $('#triggerBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>发送中...';
   try {
-    const r = await fetch('/cgi-bin/trigger.sh', { method: 'POST' });
+    const token = await ensureTriggerToken();
+    const r = await fetch('/cgi-bin/trigger.sh', {
+      method: 'POST',
+      headers: token ? { 'X-Trigger-Token': token } : {}
+    });
     const j = await r.json();
     if (j.ok) {
       showToast('✨ 已触发手动扫描');
@@ -646,6 +690,18 @@ function latClass(val, abort) {
   return 'bad';
 }
 
+function syncLabel(status) {
+  const map = {
+    synced: '已同步',
+    partial: '部分同步',
+    drifted: '已漂移',
+    error: '查询失败',
+    skipped: '本轮跳过',
+    unknown: '待首次同步'
+  };
+  return map[status] || status || '未知';
+}
+
 /* ======= 渲染卡片 ======= */
 function renderCards(st) {
   const now = Math.floor(Date.now() / 1000);
@@ -685,17 +741,29 @@ function renderCards(st) {
 
 /* ======= 渲染域名 ======= */
 function renderDomains(st) {
-  const allIps = [];
-  if (st.ipv4.enabled) st.ipv4.ips.forEach(i => allIps.push(i));
-  if (st.ipv6.enabled) st.ipv6.ips.forEach(i => allIps.push(i));
-  const tags = allIps.map(i => `<span class="ip-tag">${i.ip}</span>`).join('');
+  return st.domains.map((d, idx) => {
+    const domain = typeof d === 'string' ? { name: d } : d;
+    const v4 = domain.ipv4 || { status: 'unknown', records: [], target_records: [], last_error: null };
+    const v6 = domain.ipv6 || { status: 'unknown', records: [], target_records: [], last_error: null };
+    const tagsV4 = (v4.records || []).map(ip => `<span class="ip-tag">${ip}</span>`).join('');
+    const tagsV6 = (v6.records || []).map(ip => `<span class="ip-tag">${ip}</span>`).join('');
+    const errorText = [v4.last_error, v6.last_error].filter(Boolean).join('；');
 
-  return st.domains.map((d, idx) => `
+    return `
     <div class="domain-card">
-      <h3>${d}</h3>
+      <h3>${domain.name}</h3>
       <span class="zone-tag">Zone #${idx + 1}</span>
-      <div>${tags || '<span style="color:var(--text-muted);font-size:12px">等待首轮有效结果</span>'}</div>
-    </div>`).join('');
+      <div class="status-row">
+        <span class="status-chip ${v4.status}">A · ${syncLabel(v4.status)}</span>
+        <span class="status-chip ${v6.status}">AAAA · ${syncLabel(v6.status)}</span>
+      </div>
+      <div class="domain-note">当前 A 记录</div>
+      <div>${tagsV4 || '<span style="color:var(--text-muted);font-size:12px">暂无</span>'}</div>
+      <div class="domain-note" style="margin-top:8px">当前 AAAA 记录</div>
+      <div>${tagsV6 || '<span style="color:var(--text-muted);font-size:12px">暂无</span>'}</div>
+      ${errorText ? `<div class="domain-error">${errorText}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 
 /* ======= 渲染表格 ======= */
@@ -835,7 +903,7 @@ async function render() {
       <div class="cards">${renderCards(status)}</div>
 
       <div class="section">
-        <div class="section-title"><span class="emoji">📡</span>候选 IP 分发域名</div>
+        <div class="section-title"><span class="emoji">📡</span>域名实际同步状态</div>
         <div class="domain-grid">${renderDomains(status)}</div>
       </div>
 

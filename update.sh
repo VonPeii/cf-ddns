@@ -30,6 +30,7 @@ WEB_PORT=${WEB_PORT:-8088}
 WEB_DIR="/app/web"
 DATA_DIR="${WEB_DIR}/data"
 HISTORY_MAX=${HISTORY_MAX:-200}
+TRIGGER_TOKEN_FILE="/tmp/trigger_token"
 
 ROUND_HAS_CHANGES=0
 ROUND_HAS_VALID_RESULT=0
@@ -76,12 +77,114 @@ count_ip_list() {
     awk 'NF { c++ } END { print c + 0 }'
 }
 
+domain_state_file() {
+    echo "${DATA_DIR}/domain_$1.json"
+}
+
+generate_trigger_token() {
+    dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
+}
+
+write_ui_state() {
+    local TOKEN
+    TOKEN=$(cat "$TRIGGER_TOKEN_FILE" 2>/dev/null)
+    if [ -z "$TOKEN" ]; then
+        TOKEN=$(generate_trigger_token)
+        printf '%s' "$TOKEN" > "$TRIGGER_TOKEN_FILE"
+    fi
+
+    jq -n --arg trigger_token "$TOKEN" \
+        '{trigger_token:$trigger_token}' > "${DATA_DIR}/ui.json.tmp" \
+        && mv "${DATA_DIR}/ui.json.tmp" "${DATA_DIR}/ui.json"
+}
+
+init_domain_state_files() {
+    local i FILE
+    for i in "${!DOMAIN_NAMES[@]}"; do
+        FILE=$(domain_state_file "$i")
+        [ -f "$FILE" ] && continue
+        jq -n --arg name "${DOMAIN_NAMES[$i]}" \
+            '{name:$name,
+              ipv4:{status:"unknown",records:[],target_records:[],last_error:null,updated_at:null},
+              ipv6:{status:"unknown",records:[],target_records:[],last_error:null,updated_at:null}}' > "$FILE"
+    done
+}
+
+build_domains_state_json() {
+    local i FILE
+    for i in "${!DOMAIN_NAMES[@]}"; do
+        FILE=$(domain_state_file "$i")
+        if [ -f "$FILE" ]; then
+            cat "$FILE"
+        else
+            jq -n --arg name "${DOMAIN_NAMES[$i]}" \
+                '{name:$name,
+                  ipv4:{status:"unknown",records:[],target_records:[],last_error:null,updated_at:null},
+                  ipv6:{status:"unknown",records:[],target_records:[],last_error:null,updated_at:null}}'
+        fi
+    done | jq -s '.'
+}
+
+ip_json_to_lines() {
+    jq -r '.[]?'
+}
+
+determine_domain_sync_status() {
+    local ACTUAL_JSON=$1 TARGET_JSON=$2
+    local ACTUAL_NORM TARGET_NORM IP
+    ACTUAL_NORM=$(printf '%s\n' "$ACTUAL_JSON" | ip_json_to_lines | normalize_ip_list | sort)
+    TARGET_NORM=$(printf '%s\n' "$TARGET_JSON" | ip_json_to_lines | normalize_ip_list | sort)
+
+    if [ "$(printf '%s\n' "$ACTUAL_NORM")" = "$(printf '%s\n' "$TARGET_NORM")" ]; then
+        echo "synced"
+        return
+    fi
+
+    while IFS= read -r IP; do
+        [ -z "$IP" ] && continue
+        if printf '%s\n' "$TARGET_NORM" | grep -Fxq "$IP"; then
+            echo "partial"
+            return
+        fi
+    done <<< "$ACTUAL_NORM"
+
+    echo "drifted"
+}
+
+update_domain_state() {
+    local INDEX=$1 RECORD_TYPE=$2 STATUS=$3 RECORDS_JSON=$4 TARGET_JSON=$5 ERROR_MSG=$6
+    local FILE KEY ERROR_JSON
+    FILE=$(domain_state_file "$INDEX")
+    [ "$RECORD_TYPE" = "A" ] && KEY="ipv4" || KEY="ipv6"
+    [ -n "$ERROR_MSG" ] && ERROR_JSON=$(jq -Rn --arg e "$ERROR_MSG" '$e') || ERROR_JSON="null"
+
+    jq \
+        --arg name "${DOMAIN_NAMES[$INDEX]}" \
+        --arg key "$KEY" \
+        --arg status "$STATUS" \
+        --argjson records "$RECORDS_JSON" \
+        --argjson target_records "$TARGET_JSON" \
+        --argjson last_error "$ERROR_JSON" \
+        --arg updated_at "$(date '+%Y-%m-%d %H:%M:%S')" \
+        '.name = $name
+         | .[$key] = {
+             status: $status,
+             records: $records,
+             target_records: $target_records,
+             last_error: $last_error,
+             updated_at: $updated_at
+           }' \
+        "$FILE" > "${FILE}.tmp" && mv "${FILE}.tmp" "$FILE"
+}
+
 init_runtime_files() {
     mkdir -p "$DATA_DIR" "${WEB_DIR}/cgi-bin"
     [ ! -f "${DATA_DIR}/history.json" ] && echo '[]' > "${DATA_DIR}/history.json"
     [ ! -f "${DATA_DIR}/progress.json" ] && echo '{"active":false,"phase":"idle","percent":0,"message":"等待第一轮测速","updated_at":"--:--:--"}' > "${DATA_DIR}/progress.json"
+    init_domain_state_files
+    write_ui_state
     [ ! -f "${DATA_DIR}/status.json" ] && jq -n \
-        --argjson domains "$(printf '%s\n' "${DOMAIN_NAMES[@]}" | jq -R . | jq -s '.')" \
+        --argjson domains "$(build_domains_state_json)" \
         --argjson smart_interval $([ "$SMART_INTERVAL" = "true" ] && echo true || echo false) \
         --argjson canary_mode $([ "$CANARY_MODE" = "true" ] && echo true || echo false) \
         --argjson ipv4_enabled $([ "$ENABLE_IPV4" = "true" ] && echo true || echo false) \
@@ -171,6 +274,7 @@ validate_runtime_config() {
     check_required_command wc
     check_required_command httpd
     check_required_command seq
+    check_required_command od
 
     [ -x /app/cfst ] || fail_startup "测速程序 /app/cfst 不存在或不可执行"
 
@@ -333,6 +437,7 @@ interruptible_sleep() {
 persist_results() {
     local SLEEP_SEC=$1
     local NOW_STR=$(date '+%Y-%m-%d %H:%M:%S') NOW_TS=$(date +%s)
+    local WRITE_OK=1
 
     local IPV4_DATA="[]" IPV4_TOP_LAT="null" IPV4_TOP_SPEED="null"
     if [ "$ENABLE_IPV4" = "true" ] && [ -f "/app/result_IPv4.csv" ]; then
@@ -356,7 +461,8 @@ persist_results() {
         IPV6_TOP_SPEED=$(echo "$IPV6_DATA" | jq '.[0].speed // null')
     fi
 
-    local DOMAINS_JSON=$(printf '%s\n' "${DOMAIN_NAMES[@]}" | jq -R . | jq -s '.')
+    local DOMAINS_JSON
+    DOMAINS_JSON=$(build_domains_state_json)
 
     jq -n \
         --arg last_update "$NOW_STR" --argjson last_ts "$NOW_TS" \
@@ -372,7 +478,7 @@ persist_results() {
           smart_interval:$smart_interval, canary_mode:$canary_mode, abort_latency:$abort_latency,
           ipv4:{enabled:$ipv4_enabled, top_latency:$ipv4_top_lat, ips:$ipv4_data},
           ipv6:{enabled:$ipv6_enabled, top_latency:$ipv6_top_lat, ips:$ipv6_data}}' \
-        > "${DATA_DIR}/status.json.tmp" && mv "${DATA_DIR}/status.json.tmp" "${DATA_DIR}/status.json"
+        > "${DATA_DIR}/status.json.tmp" && mv "${DATA_DIR}/status.json.tmp" "${DATA_DIR}/status.json" || WRITE_OK=0
 
     local ENTRY=$(jq -n --arg t "$NOW_STR" --argjson ts "$NOW_TS" \
         --argjson v4l "$IPV4_TOP_LAT" --argjson v4s "$IPV4_TOP_SPEED" \
@@ -381,23 +487,35 @@ persist_results() {
 
     jq --argjson e "$ENTRY" --argjson m "$HISTORY_MAX" '. + [$e] | .[-$m:]' \
         "${DATA_DIR}/history.json" > "${DATA_DIR}/history.json.tmp" \
-        && mv "${DATA_DIR}/history.json.tmp" "${DATA_DIR}/history.json"
+        && mv "${DATA_DIR}/history.json.tmp" "${DATA_DIR}/history.json" || WRITE_OK=0
+
+    [ "$WRITE_OK" -eq 1 ]
 }
 
 # =========================================================
 # DNS 更新（单域名）
 # =========================================================
 update_dns_for_domain() {
-    local RECORD_TYPE=$1 NEW_IPS=$2 DOMAIN=$3 ZONE_ID=$4 TOKEN=$5
+    local DOMAIN_INDEX=$1 RECORD_TYPE=$2 NEW_IPS=$3 DOMAIN=$4 ZONE_ID=$5 TOKEN=$6
+    local TARGET_JSON FINAL_RESPONSE ACTUAL_JSON FINAL_STATUS
 
     NEW_IPS=$(printf '%s\n' $NEW_IPS | normalize_ip_list)
+    TARGET_JSON=$(printf '%s\n' $NEW_IPS | jq -R . | jq -s '.')
     local TARGET_COUNT
     TARGET_COUNT=$(printf '%s\n' "$NEW_IPS" | count_ip_list)
-    [ "$TARGET_COUNT" -gt 0 ] || { log_warn "[${RECORD_TYPE}] ${DOMAIN} 没有可用目标 IP，跳过更新"; return; }
+    [ "$TARGET_COUNT" -gt 0 ] || {
+        log_warn "[${RECORD_TYPE}] ${DOMAIN} 没有可用目标 IP，跳过更新"
+        update_domain_state "$DOMAIN_INDEX" "$RECORD_TYPE" "skipped" "[]" "$TARGET_JSON" "没有可用目标 IP"
+        return
+    }
 
     local API_RESPONSE
     API_RESPONSE=$(cf_api "$TOKEN" GET "/zones/${ZONE_ID}/dns_records?name=${DOMAIN}&type=${RECORD_TYPE}")
-    [ $? -ne 0 ] && { log_error "[${RECORD_TYPE}] ${DOMAIN} API 查询失败"; return; }
+    [ $? -ne 0 ] && {
+        log_error "[${RECORD_TYPE}] ${DOMAIN} API 查询失败"
+        update_domain_state "$DOMAIN_INDEX" "$RECORD_TYPE" "error" "[]" "$TARGET_JSON" "Cloudflare API 查询失败"
+        return
+    }
 
     local CURRENT_RECORDS=$(echo "$API_RESPONSE" | jq -r '.result[] | "\(.id)|\(.content)"')
     local -a CURRENT_REC_ARRAY=() IPS_TO_ADD=() RECS_TO_DEL=() OVERFLOW_RECS=()
@@ -453,7 +571,13 @@ update_dns_for_domain() {
 
     local TOTAL_ADD=${#IPS_TO_ADD[@]} TOTAL_DEL=${#RECS_TO_DEL[@]}
     local TOTAL_CHANGES=$((TOTAL_ADD + TOTAL_DEL))
-    [ $TOTAL_CHANGES -eq 0 ] && { log_info "[${RECORD_TYPE}] ${DOMAIN} 无变化"; return; }
+    if [ $TOTAL_CHANGES -eq 0 ]; then
+        ACTUAL_JSON=$(echo "$API_RESPONSE" | jq -c '[.result[].content]')
+        FINAL_STATUS=$(determine_domain_sync_status "$ACTUAL_JSON" "$TARGET_JSON")
+        update_domain_state "$DOMAIN_INDEX" "$RECORD_TYPE" "$FINAL_STATUS" "$ACTUAL_JSON" "$TARGET_JSON" ""
+        log_info "[${RECORD_TYPE}] ${DOMAIN} 无变化"
+        return
+    fi
     log_info "[${RECORD_TYPE}] ${DOMAIN} 目标 ${TARGET_COUNT} 条，当前 ${CURRENT_COUNT} 条，待新增 ${TOTAL_ADD}，待删除 ${TOTAL_DEL}"
 
     local ADD_OK=0
@@ -464,7 +588,7 @@ update_dns_for_domain() {
         [ $TOTAL_DEL -lt $REPLACEMENTS ] && REPLACEMENTS=$TOTAL_DEL
         local SLOTS=$CANARY_MAX_CHANGES
 
-        for idx in $(seq 0 $((REPLACEMENTS - 1))); do
+        for ((idx=0; idx<REPLACEMENTS; idx++)); do
             [ "$SLOTS" -le 0 ] && break
 
             local IP="${IPS_TO_ADD[$idx]}"
@@ -475,11 +599,11 @@ update_dns_for_domain() {
             if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
                 "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
                 log_info "[${RECORD_TYPE}] ${DOMAIN} +${IP}"
+                ADD_OK=$((ADD_OK + 1))
+                SLOTS=$((SLOTS - 1))
                 if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
                     log_info "[${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
-                    ADD_OK=$((ADD_OK + 1))
                     DEL_OK=$((DEL_OK + 1))
-                    SLOTS=$((SLOTS - 1))
                 else
                     log_warn "[${RECORD_TYPE}] ${DOMAIN} 删除旧记录失败，保留新增的 ${IP}"
                 fi
@@ -487,50 +611,67 @@ update_dns_for_domain() {
         done
 
         local ADD_START=$REPLACEMENTS
-        for idx in $(seq "$ADD_START" $((TOTAL_ADD - 1))); do
-            [ "$SLOTS" -le 0 ] && break
+        if [ "$ADD_START" -lt "$TOTAL_ADD" ]; then
+            for ((idx=ADD_START; idx<TOTAL_ADD; idx++)); do
+                [ "$SLOTS" -le 0 ] && break
 
-            local IP="${IPS_TO_ADD[$idx]}"
-            if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
-                "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
-                log_info "[${RECORD_TYPE}] ${DOMAIN} +${IP}"
-                ADD_OK=$((ADD_OK + 1))
-                SLOTS=$((SLOTS - 1))
-            fi
-        done
+                local IP="${IPS_TO_ADD[$idx]}"
+                if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
+                    "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
+                    log_info "[${RECORD_TYPE}] ${DOMAIN} +${IP}"
+                    ADD_OK=$((ADD_OK + 1))
+                    SLOTS=$((SLOTS - 1))
+                fi
+            done
+        fi
 
         local DEL_START=$REPLACEMENTS
-        for idx in $(seq "$DEL_START" $((TOTAL_DEL - 1))); do
-            [ "$SLOTS" -le 0 ] && break
+        if [ "$DEL_START" -lt "$TOTAL_DEL" ]; then
+            for ((idx=DEL_START; idx<TOTAL_DEL; idx++)); do
+                [ "$SLOTS" -le 0 ] && break
 
-            local REC="${RECS_TO_DEL[$idx]}"
-            local C_ID="${REC%|*}"
-            local C_IP="${REC#*|}"
-            if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
-                log_info "[${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
-                DEL_OK=$((DEL_OK + 1))
-                SLOTS=$((SLOTS - 1))
-            fi
-        done
+                local REC="${RECS_TO_DEL[$idx]}"
+                local C_ID="${REC%|*}"
+                local C_IP="${REC#*|}"
+                if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
+                    log_info "[${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
+                    DEL_OK=$((DEL_OK + 1))
+                    SLOTS=$((SLOTS - 1))
+                fi
+            done
+        fi
     else
-        for idx in $(seq 0 $((TOTAL_ADD - 1))); do
-            local IP="${IPS_TO_ADD[$idx]}"
-            if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
-                "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
-                log_info "[${RECORD_TYPE}] ${DOMAIN} +${IP}"
-                ADD_OK=$((ADD_OK + 1))
-            fi
-        done
+        if [ "$TOTAL_ADD" -gt 0 ]; then
+            for ((idx=0; idx<TOTAL_ADD; idx++)); do
+                local IP="${IPS_TO_ADD[$idx]}"
+                if cf_api "$TOKEN" POST "/zones/${ZONE_ID}/dns_records" \
+                    "{\"type\":\"${RECORD_TYPE}\",\"name\":\"${DOMAIN}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}" > /dev/null; then
+                    log_info "[${RECORD_TYPE}] ${DOMAIN} +${IP}"
+                    ADD_OK=$((ADD_OK + 1))
+                fi
+            done
+        fi
 
-        for idx in $(seq 0 $((TOTAL_DEL - 1))); do
-            local REC="${RECS_TO_DEL[$idx]}"
-            local C_ID="${REC%|*}"
-            local C_IP="${REC#*|}"
-            if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
-                log_info "[${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
-                DEL_OK=$((DEL_OK + 1))
-            fi
-        done
+        if [ "$TOTAL_DEL" -gt 0 ]; then
+            for ((idx=0; idx<TOTAL_DEL; idx++)); do
+                local REC="${RECS_TO_DEL[$idx]}"
+                local C_ID="${REC%|*}"
+                local C_IP="${REC#*|}"
+                if cf_api "$TOKEN" DELETE "/zones/${ZONE_ID}/dns_records/${C_ID}" > /dev/null; then
+                    log_info "[${RECORD_TYPE}] ${DOMAIN} -${C_IP}"
+                    DEL_OK=$((DEL_OK + 1))
+                fi
+            done
+        fi
+    fi
+
+    FINAL_RESPONSE=$(cf_api "$TOKEN" GET "/zones/${ZONE_ID}/dns_records?name=${DOMAIN}&type=${RECORD_TYPE}")
+    if [ $? -ne 0 ]; then
+        update_domain_state "$DOMAIN_INDEX" "$RECORD_TYPE" "error" "[]" "$TARGET_JSON" "Cloudflare API 复核失败"
+    else
+        ACTUAL_JSON=$(echo "$FINAL_RESPONSE" | jq -c '[.result[].content]')
+        FINAL_STATUS=$(determine_domain_sync_status "$ACTUAL_JSON" "$TARGET_JSON")
+        update_domain_state "$DOMAIN_INDEX" "$RECORD_TYPE" "$FINAL_STATUS" "$ACTUAL_JSON" "$TARGET_JSON" ""
     fi
 
     [ $ADD_OK -gt 0 ] || [ $DEL_OK -gt 0 ] && ROUND_HAS_CHANGES=1
@@ -589,7 +730,7 @@ run_speedtest() {
         local D_PCT=$((BASE_PCT + SPAN_PCT * (i + 1) / (DOMAIN_COUNT + 1)))
         report_progress "dns_update" "$D_PCT" "更新 ${DOMAIN_NAMES[$i]} 的 ${REC_TYPE} 记录..."
         log_info "更新 [${REC_TYPE}] [#$((i+1))] ${DOMAIN_NAMES[$i]}"
-        update_dns_for_domain "$REC_TYPE" "$BEST_IPS" "${DOMAIN_NAMES[$i]}" "${DOMAIN_ZONES[$i]}" "${DOMAIN_TOKENS[$i]}"
+        update_dns_for_domain "$i" "$REC_TYPE" "$BEST_IPS" "${DOMAIN_NAMES[$i]}" "${DOMAIN_ZONES[$i]}" "${DOMAIN_TOKENS[$i]}"
     done
 }
 
@@ -615,9 +756,12 @@ while true; do
     fi
 
     report_progress "persist" 94 "正在保存结果..."
-    date +%s > /tmp/last_run
     SLEEP_TIME=$(get_smart_sleep)
-    persist_results "$SLEEP_TIME"
+    if persist_results "$SLEEP_TIME"; then
+        date +%s > /tmp/last_run
+    else
+        log_error "状态持久化失败，跳过 last_run 更新时间"
+    fi
     [ "$ROUND_HAS_VALID_RESULT" -eq 1 ] && log_info "本轮至少生成了 1 份有效测速结果"
     [ "$ROUND_HAS_VALID_RESULT" -eq 0 ] && log_warn "本轮没有新的有效测速结果，状态页继续显示历史有效结果"
 
